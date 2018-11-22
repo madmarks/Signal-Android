@@ -21,7 +21,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.provider.Telephony;
-import android.util.Log;
+import org.thoughtcrime.securesms.logging.Log;
 
 import org.thoughtcrime.securesms.ApplicationContext;
 import org.thoughtcrime.securesms.jobs.MmsReceiveJob;
@@ -55,17 +55,19 @@ public class MmsListener extends BroadcastReceiver {
 
   @Override
     public void onReceive(Context context, Intent intent) {
-    Log.w(TAG, "Got MMS broadcast..." + intent.getAction());
+    Log.i(TAG, "Got MMS broadcast..." + intent.getAction());
 
     if ((Telephony.Sms.Intents.WAP_PUSH_DELIVER_ACTION.equals(intent.getAction())  &&
         Util.isDefaultSmsProvider(context))                                        ||
         (Telephony.Sms.Intents.WAP_PUSH_RECEIVED_ACTION.equals(intent.getAction()) &&
          isRelevant(context, intent)))
     {
-      Log.w(TAG, "Relevant!");
+      Log.i(TAG, "Relevant!");
+      int subscriptionId = intent.getExtras().getInt("subscription", -1);
+
       ApplicationContext.getInstance(context)
                         .getJobManager()
-                        .add(new MmsReceiveJob(context, intent.getByteArrayExtra("data")));
+                        .add(new MmsReceiveJob(context, intent.getByteArrayExtra("data"), subscriptionId));
 
       abortBroadcast();
     }

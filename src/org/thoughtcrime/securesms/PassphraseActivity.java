@@ -21,6 +21,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.os.IBinder;
+import org.thoughtcrime.securesms.logging.Log;
 
 import org.thoughtcrime.securesms.crypto.MasterSecret;
 import org.thoughtcrime.securesms.service.KeyCachingService;
@@ -32,6 +33,8 @@ import org.thoughtcrime.securesms.service.KeyCachingService;
  * @author Moxie Marlinspike
  */
 public abstract class PassphraseActivity extends BaseActionBarActivity {
+
+  private static final String TAG = PassphraseActivity.class.getSimpleName();
 
   private KeyCachingService keyCachingService;
   private MasterSecret masterSecret;
@@ -57,10 +60,15 @@ public abstract class PassphraseActivity extends BaseActionBarActivity {
         cleanup();
 
         Intent nextIntent = getIntent().getParcelableExtra("next_intent");
-        if (nextIntent != null) startActivity(nextIntent);
+        if (nextIntent != null) {
+            try {
+                startActivity(nextIntent);
+            } catch (java.lang.SecurityException e) {
+                Log.w(TAG, "Access permission not passed from PassphraseActivity, retry sharing.");
+            }
+        }
         finish();
       }
-
       @Override
       public void onServiceDisconnected(ComponentName name) {
         keyCachingService = null;

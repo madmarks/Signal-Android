@@ -6,40 +6,35 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
-import android.preference.CheckBoxPreference;
-import android.preference.Preference;
 import android.provider.ContactsContract;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.support.v4.preference.PreferenceFragment;
 import android.support.v7.app.AlertDialog;
-import android.util.Log;
+import android.support.v7.preference.CheckBoxPreference;
+import android.support.v7.preference.Preference;
+import org.thoughtcrime.securesms.logging.Log;
 import android.widget.Toast;
 
 import com.google.android.gms.gcm.GoogleCloudMessaging;
 
-import org.thoughtcrime.redphone.signaling.RedPhoneAccountManager;
-import org.thoughtcrime.redphone.signaling.RedPhoneTrustStore;
-import org.thoughtcrime.redphone.signaling.UnauthorizedException;
 import org.thoughtcrime.securesms.ApplicationPreferencesActivity;
-import org.thoughtcrime.securesms.BuildConfig;
 import org.thoughtcrime.securesms.LogSubmitActivity;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.RegistrationActivity;
 import org.thoughtcrime.securesms.contacts.ContactAccessor;
 import org.thoughtcrime.securesms.contacts.ContactIdentityManager;
-import org.thoughtcrime.securesms.crypto.MasterSecret;
-import org.thoughtcrime.securesms.push.TextSecureCommunicationFactory;
-import org.thoughtcrime.securesms.util.ProgressDialogAsyncTask;
+import org.thoughtcrime.securesms.push.AccountManagerFactory;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.libaxolotl.util.guava.Optional;
-import org.whispersystems.textsecure.api.TextSecureAccountManager;
-import org.whispersystems.textsecure.api.push.exceptions.AuthorizationFailedException;
+import org.thoughtcrime.securesms.util.task.ProgressDialogAsyncTask;
+import org.whispersystems.libsignal.util.guava.Optional;
+import org.whispersystems.signalservice.api.SignalServiceAccountManager;
+import org.whispersystems.signalservice.api.push.exceptions.AuthorizationFailedException;
 
 import java.io.IOException;
 
-public class AdvancedPreferenceFragment extends PreferenceFragment {
+public class AdvancedPreferenceFragment extends CorrectedPreferenceFragment {
   private static final String TAG = AdvancedPreferenceFragment.class.getSimpleName();
 
   private static final String PUSH_MESSAGING_PREF   = "pref_toggle_push_messaging";
@@ -47,19 +42,20 @@ public class AdvancedPreferenceFragment extends PreferenceFragment {
 
   private static final int PICK_IDENTITY_CONTACT = 1;
 
-  private MasterSecret masterSecret;
-
   @Override
   public void onCreate(Bundle paramBundle) {
     super.onCreate(paramBundle);
-    masterSecret = getArguments().getParcelable("master_secret");
-    addPreferencesFromResource(R.xml.preferences_advanced);
 
     initializeIdentitySelection();
 
     Preference submitDebugLog = this.findPreference(SUBMIT_DEBUG_LOG_PREF);
     submitDebugLog.setOnPreferenceClickListener(new SubmitDebugLogListener());
     submitDebugLog.setSummary(getVersion(getActivity()));
+  }
+
+  @Override
+  public void onCreatePreferences(@Nullable Bundle savedInstanceState, String rootKey) {
+    addPreferencesFromResource(R.xml.preferences_advanced);
   }
 
   @Override
@@ -74,7 +70,7 @@ public class AdvancedPreferenceFragment extends PreferenceFragment {
   public void onActivityResult(int reqCode, int resultCode, Intent data) {
     super.onActivityResult(reqCode, resultCode, data);
 
-    Log.w(TAG, "Got result: " + resultCode + " for req: " + reqCode);
+    Log.i(TAG, "Got result: " + resultCode + " for req: " + reqCode);
     if (resultCode == Activity.RESULT_OK && reqCode == PICK_IDENTITY_CONTACT) {
       handleIdentitySelection(data);
     }
@@ -187,12 +183,8 @@ public class AdvancedPreferenceFragment extends PreferenceFragment {
       @Override
       protected Integer doInBackground(Void... params) {
         try {
-          Context                  context                = getActivity();
-          TextSecureAccountManager accountManager         = TextSecureCommunicationFactory.createManager(context);
-          RedPhoneAccountManager   redPhoneAccountManager = new RedPhoneAccountManager(BuildConfig.REDPHONE_MASTER_URL,
-                                                                                       new RedPhoneTrustStore(context),
-                                                                                       TextSecurePreferences.getLocalNumber(context),
-                                                                                       TextSecurePreferences.getPushServerPassword(context));
+          Context                     context        = getActivity();
+          SignalServiceAccountManager accountManager = AccountManagerFactory.createManager(context);
 
           try {
             accountManager.setGcmId(Optional.<String>absent());
@@ -200,13 +192,9 @@ public class AdvancedPreferenceFragment extends PreferenceFragment {
             Log.w(TAG, e);
           }
 
-          try {
-            redPhoneAccountManager.setGcmId(Optional.<String>absent());
-          } catch (UnauthorizedException e) {
-            Log.w(TAG, e);
+          if (!TextSecurePreferences.isGcmDisabled(context)) {
+            GoogleCloudMessaging.getInstance(context).unregister();
           }
-
-          GoogleCloudMessaging.getInstance(context).unregister();
 
           return SUCCESS;
         } catch (IOException ioe) {
@@ -227,7 +215,7 @@ public class AdvancedPreferenceFragment extends PreferenceFragment {
         builder.setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
           @Override
           public void onClick(DialogInterface dialog, int which) {
-            new DisablePushMessagesTask((CheckBoxPreference)preference).execute();
+            new DisablePushMessagesTask((CheckBoxPreference)preference).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
           }
         });
         builder.show();
@@ -235,9 +223,8 @@ public class AdvancedPreferenceFragment extends PreferenceFragment {
         Intent nextIntent = new Intent(getActivity(), ApplicationPreferencesActivity.class);
 
         Intent intent = new Intent(getActivity(), RegistrationActivity.class);
-        intent.putExtra("cancel_button", true);
+        intent.putExtra(RegistrationActivity.RE_REGISTRATION_EXTRA, true);
         intent.putExtra("next_intent", nextIntent);
-        intent.putExtra("master_secret", masterSecret);
         startActivity(intent);
       }
 

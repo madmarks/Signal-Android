@@ -22,7 +22,10 @@ import android.net.NetworkInfo;
 import android.net.Uri;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.util.Log;
+import org.thoughtcrime.securesms.logging.Log;
+
+import com.google.android.mms.pdu_alt.PduParser;
+import com.google.android.mms.pdu_alt.SendConf;
 
 import org.apache.http.Header;
 import org.apache.http.HttpHost;
@@ -34,8 +37,6 @@ import org.thoughtcrime.securesms.transport.UndeliverableMessageException;
 
 import java.io.IOException;
 
-import ws.com.google.android.mms.pdu.PduParser;
-import ws.com.google.android.mms.pdu.SendConf;
 
 @SuppressWarnings("deprecation")
 public class OutgoingLegacyMmsConnection extends LegacyMmsConnection implements OutgoingMmsConnection {
@@ -72,12 +73,12 @@ public class OutgoingLegacyMmsConnection extends LegacyMmsConnection implements 
   }
 
   @Override
-  public @Nullable SendConf send(@NonNull byte[] pduBytes) throws UndeliverableMessageException {
+  public @Nullable SendConf send(@NonNull byte[] pduBytes, int subscriptionId) throws UndeliverableMessageException {
     try {
       MmsRadio radio = MmsRadio.getInstance(context);
 
-      if (isCdmaDevice()) {
-        Log.w(TAG, "Sending MMS directly without radio change...");
+      if (isDirectConnect()) {
+        Log.i(TAG, "Sending MMS directly without radio change...");
         try {
           return send(pduBytes, false, false);
         } catch (IOException e) {
@@ -85,7 +86,7 @@ public class OutgoingLegacyMmsConnection extends LegacyMmsConnection implements 
         }
       }
 
-      Log.w(TAG, "Sending MMS with radio change and proxy...");
+      Log.i(TAG, "Sending MMS with radio change and proxy...");
       radio.connect();
 
       try {
@@ -95,7 +96,7 @@ public class OutgoingLegacyMmsConnection extends LegacyMmsConnection implements 
           Log.w(TAG, e);
         }
 
-        Log.w(TAG, "Sending MMS with radio change and without proxy...");
+        Log.i(TAG, "Sending MMS with radio change and without proxy...");
 
         try {
           return send(pduBytes, true, false);
@@ -125,13 +126,13 @@ public class OutgoingLegacyMmsConnection extends LegacyMmsConnection implements 
                              ? apn.getProxy()
                              : Uri.parse(apn.getMmsc()).getHost();
 
-    Log.w(TAG, "Sending MMS of length: " + pduBytes.length
+    Log.i(TAG, "Sending MMS of length: " + pduBytes.length
                + (useMmsRadio ? ", using mms radio" : "")
                + (useProxy ? ", using proxy" : ""));
 
     try {
       if (checkRouteToHost(context, targetHost, useMmsRadio)) {
-        Log.w(TAG, "got successful route to host " + targetHost);
+        Log.i(TAG, "got successful route to host " + targetHost);
         byte[] response = execute(constructRequest(pduBytes, useProxy));
         if (response != null) return response;
       }

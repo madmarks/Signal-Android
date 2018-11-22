@@ -18,7 +18,6 @@ package org.thoughtcrime.securesms;
 
 import android.os.AsyncTask;
 import android.os.Bundle;
-import android.support.v7.app.ActionBar;
 
 import org.thoughtcrime.securesms.crypto.IdentityKeyUtil;
 import org.thoughtcrime.securesms.crypto.MasterSecret;
@@ -47,10 +46,7 @@ public class PassphraseCreateActivity extends PassphraseActivity {
   }
 
   private void initializeResources() {
-    getSupportActionBar().setDisplayOptions(ActionBar.DISPLAY_SHOW_CUSTOM);
-    getSupportActionBar().setCustomView(R.layout.centered_app_title);
-
-    new SecretGenerator().execute(MasterSecretUtil.UNENCRYPTED_PASSPHRASE);
+    new SecretGenerator().executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, MasterSecretUtil.UNENCRYPTED_PASSPHRASE);
   }
 
   private class SecretGenerator extends AsyncTask<String, Void, Void> {
@@ -69,8 +65,11 @@ public class PassphraseCreateActivity extends PassphraseActivity {
       MasterSecretUtil.generateAsymmetricMasterSecret(PassphraseCreateActivity.this, masterSecret);
       IdentityKeyUtil.generateIdentityKeys(PassphraseCreateActivity.this);
       VersionTracker.updateLastSeenVersion(PassphraseCreateActivity.this);
+
       TextSecurePreferences.setLastExperienceVersionCode(PassphraseCreateActivity.this, Util.getCurrentApkReleaseVersion(PassphraseCreateActivity.this));
       TextSecurePreferences.setPasswordDisabled(PassphraseCreateActivity.this, true);
+      TextSecurePreferences.setReadReceiptsEnabled(PassphraseCreateActivity.this, true);
+      TextSecurePreferences.setTypingIndicatorsEnabled(PassphraseCreateActivity.this, true);
 
       return null;
     }

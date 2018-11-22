@@ -20,7 +20,14 @@ import android.content.Context;
 import android.net.Uri;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.util.Log;
+import org.thoughtcrime.securesms.logging.Log;
+
+import com.google.android.mms.InvalidHeaderValueException;
+import com.google.android.mms.pdu_alt.NotifyRespInd;
+import com.google.android.mms.pdu_alt.PduComposer;
+import com.google.android.mms.pdu_alt.PduHeaders;
+import com.google.android.mms.pdu_alt.PduParser;
+import com.google.android.mms.pdu_alt.RetrieveConf;
 
 import org.apache.http.Header;
 import org.apache.http.HttpHost;
@@ -31,12 +38,6 @@ import org.apache.http.client.methods.HttpUriRequest;
 import java.io.IOException;
 import java.util.Arrays;
 
-import ws.com.google.android.mms.InvalidHeaderValueException;
-import ws.com.google.android.mms.pdu.NotifyRespInd;
-import ws.com.google.android.mms.pdu.PduComposer;
-import ws.com.google.android.mms.pdu.PduHeaders;
-import ws.com.google.android.mms.pdu.PduParser;
-import ws.com.google.android.mms.pdu.RetrieveConf;
 
 @SuppressWarnings("deprecation")
 public class IncomingLegacyMmsConnection extends LegacyMmsConnection implements IncomingMmsConnection {
@@ -47,26 +48,37 @@ public class IncomingLegacyMmsConnection extends LegacyMmsConnection implements 
   }
 
   private HttpUriRequest constructRequest(Apn contentApn, boolean useProxy) throws IOException {
-    HttpGetHC4 request = new HttpGetHC4(contentApn.getMmsc());
+    HttpGetHC4 request;
+
+    try {
+      request = new HttpGetHC4(contentApn.getMmsc());
+    } catch (IllegalArgumentException e) {
+      // #7339
+      throw new IOException(e);
+    }
+
     for (Header header : getBaseHeaders()) {
       request.addHeader(header);
     }
+
     if (useProxy) {
       HttpHost proxy = new HttpHost(contentApn.getProxy(), contentApn.getPort());
       request.setConfig(RequestConfig.custom().setProxy(proxy).build());
     }
+
     return request;
   }
 
   @Override
   public @Nullable RetrieveConf retrieve(@NonNull String contentLocation,
-                                         byte[] transactionId)
+                                         byte[] transactionId, int subscriptionId)
       throws MmsRadioException, ApnUnavailableException, IOException
   {
     MmsRadio radio = MmsRadio.getInstance(context);
     Apn contentApn = new Apn(contentLocation, apn.getProxy(), Integer.toString(apn.getPort()), apn.getUsername(), apn.getPassword());
-    if (isCdmaDevice()) {
-      Log.w(TAG, "Connecting directly...");
+
+    if (isDirectConnect()) {
+      Log.i(TAG, "Connecting directly...");
       try {
         return retrieve(contentApn, transactionId, false, false);
       } catch (IOException | ApnUnavailableException e) {
@@ -74,11 +86,11 @@ public class IncomingLegacyMmsConnection extends LegacyMmsConnection implements 
       }
     }
 
-    Log.w(TAG, "Changing radio to MMS mode..");
+    Log.i(TAG, "Changing radio to MMS mode..");
     radio.connect();
 
     try {
-      Log.w(TAG, "Downloading in MMS mode with proxy...");
+      Log.i(TAG, "Downloading in MMS mode with proxy...");
 
       try {
         return retrieve(contentApn, transactionId, true, true);
@@ -86,7 +98,7 @@ public class IncomingLegacyMmsConnection extends LegacyMmsConnection implements 
         Log.w(TAG, e);
       }
 
-      Log.w(TAG, "Downloading in MMS mode without proxy...");
+      Log.i(TAG, "Downloading in MMS mode without proxy...");
 
       return retrieve(contentApn, transactionId, true, false);
 
@@ -105,7 +117,7 @@ public class IncomingLegacyMmsConnection extends LegacyMmsConnection implements 
                              ? contentApn.getProxy()
                              : Uri.parse(contentApn.getMmsc()).getHost();
     if (checkRouteToHost(context, targetHost, usingMmsRadio)) {
-      Log.w(TAG, "got successful route to host " + targetHost);
+      Log.i(TAG, "got successful route to host " + targetHost);
       pdu = execute(constructRequest(contentApn, useProxy));
     }
 

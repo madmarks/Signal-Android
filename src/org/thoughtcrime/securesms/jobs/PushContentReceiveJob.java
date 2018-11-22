@@ -1,26 +1,32 @@
 package org.thoughtcrime.securesms.jobs;
 
 import android.content.Context;
-import android.util.Log;
+import android.support.annotation.NonNull;
 
-import org.thoughtcrime.securesms.ApplicationContext;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.thoughtcrime.securesms.jobmanager.SafeData;
+import org.thoughtcrime.securesms.logging.Log;
+
+import org.thoughtcrime.securesms.jobmanager.JobParameters;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.jobqueue.JobManager;
-import org.whispersystems.jobqueue.JobParameters;
-import org.whispersystems.libaxolotl.InvalidVersionException;
-import org.whispersystems.textsecure.api.messages.TextSecureEnvelope;
-import org.thoughtcrime.securesms.database.TextSecureDirectory;
-import org.thoughtcrime.securesms.database.NotInDirectoryException;
-import org.whispersystems.textsecure.api.push.ContactTokenDetails;
+import org.whispersystems.libsignal.InvalidVersionException;
+import org.whispersystems.signalservice.api.messages.SignalServiceEnvelope;
 
 import java.io.IOException;
 
+import androidx.work.Data;
+
 public class PushContentReceiveJob extends PushReceivedJob {
 
-  private static final String TAG = PushContentReceiveJob.class.getSimpleName();
+  private static final long   serialVersionUID = 5685475456901715638L;
+  private static final String TAG              = PushContentReceiveJob.class.getSimpleName();
 
-  private final String data;
+  private static final String KEY_DATA = "data";
+
+  private String data;
+
+  public PushContentReceiveJob() {
+    super(null, null);
+  }
 
   public PushContentReceiveJob(Context context) {
     super(context, JobParameters.newBuilder().create());
@@ -28,24 +34,27 @@ public class PushContentReceiveJob extends PushReceivedJob {
   }
 
   public PushContentReceiveJob(Context context, String data) {
-    super(context, JobParameters.newBuilder()
-                                .withPersistence()
-                                .withWakeLock(true)
-                                .create());
-
+    super(context, JobParameters.newBuilder().create());
     this.data = data;
   }
 
   @Override
-  public void onAdded() {}
+  protected void initialize(@NonNull SafeData data) {
+    this.data = data.getString(KEY_DATA);
+  }
+
+  @Override
+  protected @NonNull Data serialize(@NonNull Data.Builder dataBuilder) {
+    return dataBuilder.putString(KEY_DATA, data).build();
+  }
 
   @Override
   public void onRun() {
     try {
-      String             sessionKey = TextSecurePreferences.getSignalingKey(context);
-      TextSecureEnvelope envelope   = new TextSecureEnvelope(data, sessionKey);
+      String                sessionKey = TextSecurePreferences.getSignalingKey(context);
+      SignalServiceEnvelope envelope   = new SignalServiceEnvelope(data, sessionKey);
 
-      handle(envelope, true);
+      processEnvelope(envelope);
     } catch (IOException | InvalidVersionException e) {
       Log.w(TAG, e);
     }

@@ -6,31 +6,38 @@ import android.os.Build;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
 import android.os.Bundle;
-import android.preference.Preference;
-import android.preference.PreferenceScreen;
 import android.provider.Settings;
 import android.provider.Telephony;
+import android.support.annotation.Nullable;
 import android.support.v4.app.Fragment;
 import android.support.v4.app.FragmentManager;
 import android.support.v4.app.FragmentTransaction;
-import android.support.v4.preference.PreferenceFragment;
+import android.support.v7.preference.Preference;
+import android.support.v7.preference.PreferenceScreen;
 
 import org.thoughtcrime.securesms.ApplicationPreferencesActivity;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.Util;
 
-public class SmsMmsPreferenceFragment extends PreferenceFragment {
+public class SmsMmsPreferenceFragment extends CorrectedPreferenceFragment {
   private static final String KITKAT_DEFAULT_PREF = "pref_set_default";
   private static final String MMS_PREF            = "pref_mms_preferences";
 
   @Override
   public void onCreate(Bundle paramBundle) {
     super.onCreate(paramBundle);
-    addPreferencesFromResource(R.xml.preferences_sms_mms);
+
 
     this.findPreference(MMS_PREF)
       .setOnPreferenceClickListener(new ApnPreferencesClickListener());
+
+    initializePlatformSpecificOptions();
+  }
+
+  @Override
+  public void onCreatePreferences(@Nullable Bundle savedInstanceState, String rootKey) {
+    addPreferencesFromResource(R.xml.preferences_sms_mms);
   }
 
   @Override
@@ -38,7 +45,7 @@ public class SmsMmsPreferenceFragment extends PreferenceFragment {
     super.onResume();
     ((ApplicationPreferencesActivity) getActivity()).getSupportActionBar().setTitle(R.string.preferences__sms_mms);
 
-    initializePlatformSpecificOptions();
+    initializeDefaultPreference();
   }
 
   private void initializePlatformSpecificOptions() {
@@ -51,24 +58,32 @@ public class SmsMmsPreferenceFragment extends PreferenceFragment {
     if (VERSION.SDK_INT >= VERSION_CODES.KITKAT) {
       if (allSmsPreference != null) preferenceScreen.removePreference(allSmsPreference);
       if (allMmsPreference != null) preferenceScreen.removePreference(allMmsPreference);
-
-      if (Util.isDefaultSmsProvider(getActivity())) {
-        defaultPreference.setIntent(new Intent(Settings.ACTION_WIRELESS_SETTINGS));
-        defaultPreference.setTitle(getString(R.string.ApplicationPreferencesActivity_sms_enabled));
-        defaultPreference.setSummary(getString(R.string.ApplicationPreferencesActivity_touch_to_change_your_default_sms_app));
-      } else {
-        Intent intent = new Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT);
-        intent.putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, getActivity().getPackageName());
-        defaultPreference.setIntent(intent);
-        defaultPreference.setTitle(getString(R.string.ApplicationPreferencesActivity_sms_disabled));
-        defaultPreference.setSummary(getString(R.string.ApplicationPreferencesActivity_touch_to_make_signal_your_default_sms_app));
-      }
     } else if (defaultPreference != null) {
       preferenceScreen.removePreference(defaultPreference);
     }
 
     if (VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP && manualMmsPreference != null) {
       preferenceScreen.removePreference(manualMmsPreference);
+    }
+  }
+
+  private void initializeDefaultPreference() {
+    if (VERSION.SDK_INT < VERSION_CODES.KITKAT) return;
+
+    Preference defaultPreference = findPreference(KITKAT_DEFAULT_PREF);
+    if (Util.isDefaultSmsProvider(getActivity())) {
+      if (VERSION.SDK_INT < VERSION_CODES.M) defaultPreference.setIntent(new Intent(Settings.ACTION_WIRELESS_SETTINGS));
+      if (VERSION.SDK_INT < VERSION_CODES.N) defaultPreference.setIntent(new Intent(Settings.ACTION_SETTINGS));
+      else                                   defaultPreference.setIntent(new Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS));
+
+      defaultPreference.setTitle(getString(R.string.ApplicationPreferencesActivity_sms_enabled));
+      defaultPreference.setSummary(getString(R.string.ApplicationPreferencesActivity_touch_to_change_your_default_sms_app));
+    } else {
+      Intent intent = new Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT);
+      intent.putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, getActivity().getPackageName());
+      defaultPreference.setIntent(intent);
+      defaultPreference.setTitle(getString(R.string.ApplicationPreferencesActivity_sms_disabled));
+      defaultPreference.setSummary(getString(R.string.ApplicationPreferencesActivity_touch_to_make_signal_your_default_sms_app));
     }
   }
 

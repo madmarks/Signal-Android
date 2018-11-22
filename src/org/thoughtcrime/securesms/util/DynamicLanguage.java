@@ -1,10 +1,14 @@
 package org.thoughtcrime.securesms.util;
 
+import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.os.Build.VERSION;
+import android.os.Build.VERSION_CODES;
+import android.support.annotation.RequiresApi;
 import android.text.TextUtils;
 
 import java.util.Locale;
@@ -39,13 +43,22 @@ public class DynamicLanguage {
     return currentLocale;
   }
 
+  @RequiresApi(VERSION_CODES.JELLY_BEAN_MR1)
+  public static int getLayoutDirection(Context context) {
+    Configuration configuration = context.getResources().getConfiguration();
+    return configuration.getLayoutDirection();
+  }
+
   private static void setContextLocale(Context context, Locale selectedLocale) {
     Configuration configuration = context.getResources().getConfiguration();
 
     if (!configuration.locale.equals(selectedLocale)) {
       configuration.locale = selectedLocale;
+      if (VERSION.SDK_INT >= VERSION_CODES.JELLY_BEAN_MR1) {
+        configuration.setLayoutDirection(selectedLocale);
+      }
       context.getResources().updateConfiguration(configuration,
-                                                  context.getResources().getDisplayMetrics());
+                                                 context.getResources().getDisplayMetrics());
     }
   }
 
@@ -70,5 +83,4 @@ public class DynamicLanguage {
       activity.overridePendingTransition(0, 0);
     }
   }
-
 }

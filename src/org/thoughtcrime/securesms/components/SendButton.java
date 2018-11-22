@@ -1,6 +1,7 @@
 package org.thoughtcrime.securesms.components;
 
 import android.content.Context;
+import android.support.annotation.NonNull;
 import android.util.AttributeSet;
 import android.view.View;
 import android.widget.ImageButton;
@@ -9,7 +10,8 @@ import org.thoughtcrime.securesms.TransportOption;
 import org.thoughtcrime.securesms.TransportOptions;
 import org.thoughtcrime.securesms.TransportOptions.OnTransportChangedListener;
 import org.thoughtcrime.securesms.TransportOptionsPopup;
-import org.whispersystems.libaxolotl.util.guava.Optional;
+import org.thoughtcrime.securesms.util.ViewUtil;
+import org.whispersystems.libsignal.util.guava.Optional;
 
 public class SendButton extends ImageButton
     implements TransportOptions.OnTransportChangedListener,
@@ -25,18 +27,21 @@ public class SendButton extends ImageButton
   public SendButton(Context context) {
     super(context);
     this.transportOptions = initializeTransportOptions(false);
+    ViewUtil.mirrorIfRtl(this, getContext());
   }
 
   @SuppressWarnings("unused")
   public SendButton(Context context, AttributeSet attrs) {
     super(context, attrs);
     this.transportOptions = initializeTransportOptions(false);
+    ViewUtil.mirrorIfRtl(this, getContext());
   }
 
   @SuppressWarnings("unused")
   public SendButton(Context context, AttributeSet attrs, int defStyle) {
     super(context, attrs, defStyle);
     this.transportOptions = initializeTransportOptions(false);
+    ViewUtil.mirrorIfRtl(this, getContext());
   }
 
   private TransportOptions initializeTransportOptions(boolean media) {
@@ -79,14 +84,22 @@ public class SendButton extends ImageButton
     transportOptions.setDefaultTransport(type);
   }
 
+  public void setTransport(@NonNull TransportOption option) {
+    transportOptions.setSelectedTransport(option);
+  }
+
+  public void setDefaultSubscriptionId(Optional<Integer> subscriptionId) {
+    transportOptions.setDefaultSubscriptionId(subscriptionId);
+  }
+
   @Override
   public void onSelected(TransportOption option) {
-    transportOptions.setSelectedTransport(option.getType());
+    transportOptions.setSelectedTransport(option);
     getTransportOptionsPopup().dismiss();
   }
 
   @Override
-  public void onChange(TransportOption newTransport) {
+  public void onChange(TransportOption newTransport, boolean isManualSelection) {
     setImageResource(newTransport.getDrawable());
     setContentDescription(newTransport.getDescription());
   }

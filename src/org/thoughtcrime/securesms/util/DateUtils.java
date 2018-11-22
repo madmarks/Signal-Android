@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2014 Open Whisper Systems
  *
  * This program is free software: you can redistribute it and/or modify
@@ -18,14 +18,14 @@ package org.thoughtcrime.securesms.util;
 
 import android.content.Context;
 import android.os.Build;
+import android.support.annotation.NonNull;
 import android.text.format.DateFormat;
-
-import java.text.SimpleDateFormat;
-import java.util.Locale;
 
 import org.thoughtcrime.securesms.R;
 
+import java.text.SimpleDateFormat;
 import java.util.Date;
+import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -33,8 +33,16 @@ import java.util.concurrent.TimeUnit;
  */
 public class DateUtils extends android.text.format.DateUtils {
 
+  @SuppressWarnings("unused")
+  private static final String           TAG         = DateUtils.class.getSimpleName();
+  private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyyMMdd");
+
   private static boolean isWithin(final long millis, final long span, final TimeUnit unit) {
     return System.currentTimeMillis() - millis <= unit.toMillis(span);
+  }
+
+  private static boolean isYesterday(final long when) {
+    return DateUtils.isToday(when + TimeUnit.DAYS.toMillis(1));
   }
 
   private static int convertDelta(final long millis, TimeUnit to) {
@@ -48,7 +56,7 @@ public class DateUtils extends android.text.format.DateUtils {
 
   public static String getBriefRelativeTimeSpanString(final Context c, final Locale locale, final long timestamp) {
     if (isWithin(timestamp, 1, TimeUnit.MINUTES)) {
-      return c.getString(R.string.DateUtils_now);
+      return c.getString(R.string.DateUtils_just_now);
     } else if (isWithin(timestamp, 1, TimeUnit.HOURS)) {
       int mins = convertDelta(timestamp, TimeUnit.MINUTES);
       return c.getResources().getString(R.string.DateUtils_minutes_ago, mins);
@@ -66,7 +74,7 @@ public class DateUtils extends android.text.format.DateUtils {
 
   public static String getExtendedRelativeTimeSpanString(final Context c, final Locale locale, final long timestamp) {
     if (isWithin(timestamp, 1, TimeUnit.MINUTES)) {
-      return c.getString(R.string.DateUtils_now);
+      return c.getString(R.string.DateUtils_just_now);
     } else if (isWithin(timestamp, 1, TimeUnit.HOURS)) {
       int mins = (int)TimeUnit.MINUTES.convert(System.currentTimeMillis() - timestamp, TimeUnit.MILLISECONDS);
       return c.getResources().getString(R.string.DateUtils_minutes_ago, mins);
@@ -87,7 +95,7 @@ public class DateUtils extends android.text.format.DateUtils {
     SimpleDateFormat simpleDateFormat = new SimpleDateFormat("yyyyMMdd");
 
     if (simpleDateFormat.format(System.currentTimeMillis()).equals(simpleDateFormat.format(timestamp))) {
-      return "Today";
+      return context.getString(R.string.DeviceListItem_today);
     } else {
       String format;
 
@@ -109,6 +117,27 @@ public class DateUtils extends android.text.format.DateUtils {
     }
 
     return new SimpleDateFormat(dateFormatPattern, locale);
+  }
+
+  public static String getRelativeDate(@NonNull Context context,
+                                       @NonNull Locale locale,
+                                       long timestamp)
+  {
+    if (isToday(timestamp)) {
+      return context.getString(R.string.DateUtils_today);
+    } else if (isYesterday(timestamp)) {
+      return context.getString(R.string.DateUtils_yesterday);
+    } else {
+      return getFormattedDateTime(timestamp, "EEE, MMM d, yyyy", locale);
+    }
+  }
+
+  public static boolean isSameDay(long t1, long t2) {
+    return DATE_FORMAT.format(new Date(t1)).equals(DATE_FORMAT.format(new Date(t2)));
+  }
+
+  public static boolean isSameExtendedRelativeTimestamp(@NonNull Context context, @NonNull Locale locale, long t1, long t2) {
+    return getExtendedRelativeTimeSpanString(context, locale, t1).equals(getExtendedRelativeTimeSpanString(context, locale, t2));
   }
 
   private static String getLocalizedPattern(String template, Locale locale) {

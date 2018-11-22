@@ -2,14 +2,15 @@ package org.thoughtcrime.securesms.contacts.avatars;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
+import android.support.v4.content.ContextCompat;
 
 import com.makeramen.roundedimageview.RoundedDrawable;
 
 import org.thoughtcrime.securesms.R;
 
-public class TransparentContactPhoto implements ContactPhoto {
+public class TransparentContactPhoto implements FallbackContactPhoto {
 
-  TransparentContactPhoto() {}
+  public TransparentContactPhoto() {}
 
   @Override
   public Drawable asDrawable(Context context, int color) {
@@ -23,6 +24,7 @@ public class TransparentContactPhoto implements ContactPhoto {
 
   @Override
   public Drawable asCallCard(Context context) {
-    return context.getResources().getDrawable(R.drawable.ic_contact_picture);
+    return ContextCompat.getDrawable(context, R.drawable.ic_contact_picture_large);
   }
+
 }

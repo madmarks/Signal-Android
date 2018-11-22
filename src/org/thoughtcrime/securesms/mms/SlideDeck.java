@@ -17,10 +17,14 @@
 package org.thoughtcrime.securesms.mms;
 
 import android.content.Context;
+import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
+
+import com.annimon.stream.Stream;
 
 import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.util.MediaUtil;
+import org.whispersystems.libsignal.util.guava.Optional;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -29,14 +33,14 @@ public class SlideDeck {
 
   private final List<Slide> slides = new LinkedList<>();
 
-  public SlideDeck(Context context, List<Attachment> attachments) {
+  public SlideDeck(@NonNull Context context, @NonNull List<? extends Attachment> attachments) {
     for (Attachment attachment : attachments) {
       Slide slide = MediaUtil.getSlideForAttachment(context, attachment);
       if (slide != null) slides.add(slide);
     }
   }
 
-  public SlideDeck(Context context, Attachment attachment) {
+  public SlideDeck(@NonNull Context context, @NonNull Attachment attachment) {
     Slide slide = MediaUtil.getSlideForAttachment(context, attachment);
     if (slide != null) slides.add(slide);
   }
@@ -48,6 +52,22 @@ public class SlideDeck {
     slides.clear();
   }
 
+  @NonNull
+  public String getBody() {
+    String body = "";
+
+    for (Slide slide : slides) {
+      Optional<String> slideBody = slide.getBody();
+
+      if (slideBody.isPresent()) {
+        body = slideBody.get();
+      }
+    }
+
+    return body;
+  }
+
+  @NonNull
   public List<Attachment> asAttachments() {
     List<Attachment> attachments = new LinkedList<>();
 
@@ -68,7 +88,7 @@ public class SlideDeck {
 
   public boolean containsMediaSlide() {
     for (Slide slide : slides) {
-      if (slide.hasImage() || slide.hasVideo() || slide.hasAudio()) {
+      if (slide.hasImage() || slide.hasVideo() || slide.hasAudio() || slide.hasDocument()) {
         return true;
       }
     }
@@ -85,10 +105,24 @@ public class SlideDeck {
     return null;
   }
 
+  public @NonNull List<Slide> getThumbnailSlides() {
+    return Stream.of(slides).filter(Slide::hasImage).toList();
+  }
+
   public @Nullable AudioSlide getAudioSlide() {
     for (Slide slide : slides) {
       if (slide.hasAudio()) {
         return (AudioSlide)slide;
+      }
+    }
+
+    return null;
+  }
+
+  public @Nullable DocumentSlide getDocumentSlide() {
+    for (Slide slide: slides) {
+      if (slide.hasDocument()) {
+        return (DocumentSlide)slide;
       }
     }
 

@@ -10,8 +10,9 @@ import android.support.v4.app.NotificationCompat;
 
 import org.thoughtcrime.securesms.ConversationListActivity;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.preferences.NotificationPrivacyPreference;
+import org.thoughtcrime.securesms.preferences.widgets.NotificationPrivacyPreference;
 import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.Util;
 
 import java.util.LinkedList;
@@ -29,8 +30,11 @@ public class MultipleRecipientNotificationBuilder extends AbstractNotificationBu
     setContentTitle(context.getString(R.string.app_name));
     setContentIntent(PendingIntent.getActivity(context, 0, new Intent(context, ConversationListActivity.class), 0));
     setCategory(NotificationCompat.CATEGORY_MESSAGE);
-    setPriority(NotificationCompat.PRIORITY_HIGH);
-    setDeleteIntent(PendingIntent.getBroadcast(context, 0, new Intent(MessageNotifier.DeleteReceiver.DELETE_REMINDER_ACTION), 0));
+    setGroupSummary(true);
+
+    if (!NotificationChannels.supported()) {
+      setPriority(TextSecurePreferences.getNotificationPriority(context));
+    }
   }
 
   public void setMessageCount(int messageCount, int threadCount) {
@@ -44,6 +48,10 @@ public class MultipleRecipientNotificationBuilder extends AbstractNotificationBu
     if (privacy.isDisplayContact()) {
       setContentText(context.getString(R.string.MessageNotifier_most_recent_from_s,
                                        recipient.toShortString()));
+    }
+
+    if (recipient.getNotificationChannel() != null) {
+      setChannelId(recipient.getNotificationChannel());
     }
   }
 

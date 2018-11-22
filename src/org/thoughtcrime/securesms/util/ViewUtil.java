@@ -16,7 +16,9 @@
  */
 package org.thoughtcrime.securesms.util;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.drawable.Drawable;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
@@ -26,8 +28,7 @@ import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.v4.view.ViewCompat;
 import android.support.v4.view.animation.FastOutSlowInInterpolator;
-import android.text.TextUtils;
-import android.text.TextUtils.TruncateAt;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -39,6 +40,7 @@ import android.widget.TextView;
 
 import org.thoughtcrime.securesms.util.concurrent.ListenableFuture;
 import org.thoughtcrime.securesms.util.concurrent.SettableFuture;
+import org.thoughtcrime.securesms.util.views.Stub;
 
 public class ViewUtil {
   @SuppressWarnings("deprecation")
@@ -92,17 +94,6 @@ public class ViewUtil {
     parent.addView(toAdd, childIndex > -1 ? childIndex : defaultIndex);
   }
 
-  public static CharSequence ellipsize(@Nullable CharSequence text, @NonNull TextView view) {
-    if (TextUtils.isEmpty(text) || view.getWidth() == 0 || view.getEllipsize() != TruncateAt.END) {
-      return text;
-    } else {
-      return TextUtils.ellipsize(text,
-                                 view.getPaint(),
-                                 view.getWidth() - view.getPaddingRight() - view.getPaddingLeft(),
-                                 TruncateAt.END);
-    }
-  }
-
   @SuppressWarnings("unchecked")
   public static <T extends View> T inflateStub(@NonNull View parent, @IdRes int stubId) {
     return (T)((ViewStub)parent.findViewById(stubId)).inflate();
@@ -116,6 +107,10 @@ public class ViewUtil {
   @SuppressWarnings("unchecked")
   public static <T extends View> T findById(@NonNull Activity parent, @IdRes int resId) {
     return (T) parent.findViewById(resId);
+  }
+
+  public static <T extends View> Stub<T> findStubById(@NonNull Activity parent, @IdRes int resId) {
+    return new Stub<T>((ViewStub)parent.findViewById(resId));
   }
 
   private static Animation getAlphaAnimation(float from, float to, int duration) {
@@ -179,5 +174,70 @@ public class ViewUtil {
                                            @LayoutRes int            layoutResId)
   {
     return (T)(inflater.inflate(layoutResId, parent, false));
+  }
+
+  @SuppressLint("RtlHardcoded")
+  public static void setTextViewGravityStart(final @NonNull TextView textView, @NonNull Context context) {
+    if (VERSION.SDK_INT >= VERSION_CODES.JELLY_BEAN_MR1) {
+      if (DynamicLanguage.getLayoutDirection(context) == View.LAYOUT_DIRECTION_RTL) {
+        textView.setGravity(Gravity.RIGHT);
+      } else {
+        textView.setGravity(Gravity.LEFT);
+      }
+    }
+  }
+
+  public static void mirrorIfRtl(View view, Context context) {
+    if (VERSION.SDK_INT >= VERSION_CODES.JELLY_BEAN_MR1 &&
+        DynamicLanguage.getLayoutDirection(context) == View.LAYOUT_DIRECTION_RTL) {
+      view.setScaleX(-1.0f);
+    }
+  }
+
+  public static int dpToPx(Context context, int dp) {
+    return (int)((dp * context.getResources().getDisplayMetrics().density) + 0.5);
+  }
+
+  public static void updateLayoutParams(@NonNull View view, int width, int height) {
+    view.getLayoutParams().width  = width;
+    view.getLayoutParams().height = height;
+    view.requestLayout();
+  }
+
+  public static int getLeftMargin(@NonNull View view) {
+    if (ViewCompat.getLayoutDirection(view) == ViewCompat.LAYOUT_DIRECTION_LTR) {
+      return ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).leftMargin;
+    }
+    return ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).rightMargin;
+  }
+
+  public static int getRightMargin(@NonNull View view) {
+    if (ViewCompat.getLayoutDirection(view) == ViewCompat.LAYOUT_DIRECTION_LTR) {
+      return ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).rightMargin;
+    }
+    return ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).leftMargin;
+  }
+
+  public static void setLeftMargin(@NonNull View view, int margin) {
+    if (ViewCompat.getLayoutDirection(view) == ViewCompat.LAYOUT_DIRECTION_LTR) {
+      ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).leftMargin = margin;
+    } else {
+      ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).rightMargin = margin;
+    }
+    view.forceLayout();
+    view.requestLayout();
+  }
+
+  public static void setTopMargin(@NonNull View view, int margin) {
+    ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).topMargin = margin;
+    view.requestLayout();
+  }
+
+  public static void setPaddingTop(@NonNull View view, int padding) {
+    view.setPadding(view.getPaddingLeft(), padding, view.getPaddingRight(), view.getPaddingBottom());
+  }
+
+  public static void setPaddingBottom(@NonNull View view, int padding) {
+    view.setPadding(view.getPaddingLeft(), view.getPaddingTop(), view.getPaddingRight(), padding);
   }
 }

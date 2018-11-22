@@ -1,62 +1,99 @@
 package org.thoughtcrime.securesms.jobs;
 
 import android.content.Context;
+import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.telephony.SmsMessage;
-import android.util.Log;
-import android.util.Pair;
 
-import org.thoughtcrime.securesms.crypto.MasterSecret;
-import org.thoughtcrime.securesms.crypto.MasterSecretUnion;
-import org.thoughtcrime.securesms.crypto.MasterSecretUtil;
+import org.thoughtcrime.securesms.jobmanager.SafeData;
+import org.thoughtcrime.securesms.logging.Log;
+
 import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.EncryptingSmsDatabase;
+import org.thoughtcrime.securesms.database.MessagingDatabase.InsertResult;
+import org.thoughtcrime.securesms.database.SmsDatabase;
+import org.thoughtcrime.securesms.jobmanager.JobParameters;
 import org.thoughtcrime.securesms.notifications.MessageNotifier;
-import org.thoughtcrime.securesms.recipients.RecipientFactory;
-import org.thoughtcrime.securesms.recipients.Recipients;
-import org.thoughtcrime.securesms.service.KeyCachingService;
+import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.sms.IncomingTextMessage;
-import org.whispersystems.jobqueue.JobParameters;
-import org.whispersystems.libaxolotl.util.guava.Optional;
+import org.thoughtcrime.securesms.util.Base64;
+import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.whispersystems.libsignal.util.guava.Optional;
 
+import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
 
+import androidx.work.Data;
+
 public class SmsReceiveJob extends ContextJob {
+
+  private static final long serialVersionUID = 1L;
 
   private static final String TAG = SmsReceiveJob.class.getSimpleName();
 
-  private final Object[] pdus;
+  private static final String KEY_PDUS            = "pdus";
+  private static final String KEY_SUBSCRIPTION_ID = "subscription_id";
 
-  public SmsReceiveJob(Context context, Object[] pdus) {
+  private @Nullable Object[] pdus;
+
+  private int subscriptionId;
+
+  public SmsReceiveJob() {
+    super(null, null);
+  }
+
+  public SmsReceiveJob(@NonNull Context context, @Nullable Object[] pdus, int subscriptionId) {
     super(context, JobParameters.newBuilder()
-                                .withPersistence()
-                                .withWakeLock(true)
+                                .withSqlCipherRequirement()
                                 .create());
 
-    this.pdus = pdus;
+    this.pdus           = pdus;
+    this.subscriptionId = subscriptionId;
   }
 
   @Override
-  public void onAdded() {}
-
-  @Override
-  public void onRun() {
-    Optional<IncomingTextMessage> message      = assembleMessageFragments(pdus);
-    MasterSecret                  masterSecret = KeyCachingService.getMasterSecret(context);
-
-    MasterSecretUnion masterSecretUnion;
-
-    if (masterSecret == null) {
-      masterSecretUnion = new MasterSecretUnion(MasterSecretUtil.getAsymmetricMasterSecret(context, null));
-    } else {
-      masterSecretUnion = new MasterSecretUnion(masterSecret);
+  protected void initialize(@NonNull SafeData data) {
+    String[] encoded = data.getStringArray(KEY_PDUS);
+    pdus = new Object[encoded.length];
+    try {
+      for (int i = 0; i < encoded.length; i++) {
+        pdus[i] = Base64.decode(encoded[i]);
+      }
+    } catch (IOException e) {
+      throw new AssertionError(e);
     }
 
+    subscriptionId = data.getInt(KEY_SUBSCRIPTION_ID);
+  }
+
+  @Override
+  protected @NonNull Data serialize(@NonNull Data.Builder dataBuilder) {
+    String[] encoded = new String[pdus.length];
+    for (int i = 0; i < pdus.length; i++) {
+      encoded[i] = Base64.encodeBytes((byte[]) pdus[i]);
+    }
+
+    return dataBuilder.putStringArray(KEY_PDUS, encoded)
+                      .putInt(KEY_SUBSCRIPTION_ID, subscriptionId)
+                      .build();
+  }
+
+  @Override
+  public void onRun() throws MigrationPendingException {
+    Log.i(TAG, "onRun()");
+    
+    Optional<IncomingTextMessage> message = assembleMessageFragments(pdus, subscriptionId);
+
     if (message.isPresent() && !isBlocked(message.get())) {
-      Pair<Long, Long> messageAndThreadId = storeMessage(masterSecretUnion, message.get());
-      MessageNotifier.updateNotification(context, masterSecret, messageAndThreadId.second);
+      Optional<InsertResult> insertResult = storeMessage(message.get());
+
+      if (insertResult.isPresent()) {
+        MessageNotifier.updateNotification(context, insertResult.get().getThreadId());
+      }
     } else if (message.isPresent()) {
       Log.w(TAG, "*** Received blocked SMS, ignoring...");
+    } else {
+      Log.w(TAG, "*** Failed to assemble message fragments!");
     }
   }
 
@@ -67,39 +104,46 @@ public class SmsReceiveJob extends ContextJob {
 
   @Override
   public boolean onShouldRetry(Exception exception) {
-    return false;
+    return exception instanceof MigrationPendingException;
   }
 
   private boolean isBlocked(IncomingTextMessage message) {
     if (message.getSender() != null) {
-      Recipients recipients = RecipientFactory.getRecipientsFromString(context, message.getSender(), false);
-      return recipients.isBlocked();
+      Recipient recipient = Recipient.from(context, message.getSender(), false);
+      return recipient.isBlocked();
     }
 
     return false;
   }
 
-  private Pair<Long, Long> storeMessage(MasterSecretUnion masterSecret, IncomingTextMessage message) {
-    EncryptingSmsDatabase database = DatabaseFactory.getEncryptingSmsDatabase(context);
+  private Optional<InsertResult> storeMessage(IncomingTextMessage message) throws MigrationPendingException {
+    SmsDatabase database = DatabaseFactory.getSmsDatabase(context);
+    database.ensureMigration();
 
-    Pair<Long, Long> messageAndThreadId;
-
-    if (message.isSecureMessage()) {
-      IncomingTextMessage placeholder = new IncomingTextMessage(message, "");
-      messageAndThreadId = database.insertMessageInbox(placeholder);
-      database.markAsLegacyVersion(messageAndThreadId.first);
-    } else {
-      messageAndThreadId = database.insertMessageInbox(masterSecret, message);
+    if (TextSecurePreferences.getNeedsSqlCipherMigration(context)) {
+      throw new MigrationPendingException();
     }
 
-    return messageAndThreadId;
+    if (message.isSecureMessage()) {
+      IncomingTextMessage    placeholder  = new IncomingTextMessage(message, "");
+      Optional<InsertResult> insertResult = database.insertMessageInbox(placeholder);
+      database.markAsLegacyVersion(insertResult.get().getMessageId());
+
+      return insertResult;
+    } else {
+      return database.insertMessageInbox(message);
+    }
   }
 
-  private Optional<IncomingTextMessage> assembleMessageFragments(Object[] pdus) {
+  private Optional<IncomingTextMessage> assembleMessageFragments(@Nullable Object[] pdus, int subscriptionId) {
+    if (pdus == null) {
+      return Optional.absent();
+    }
+
     List<IncomingTextMessage> messages = new LinkedList<>();
 
     for (Object pdu : pdus) {
-      messages.add(new IncomingTextMessage(SmsMessage.createFromPdu((byte[])pdu)));
+      messages.add(new IncomingTextMessage(context, SmsMessage.createFromPdu((byte[])pdu), subscriptionId));
     }
 
     if (messages.isEmpty()) {
@@ -107,5 +151,9 @@ public class SmsReceiveJob extends ContextJob {
     }
 
     return Optional.of(new IncomingTextMessage(messages));
+  }
+
+  private class MigrationPendingException extends Exception {
+
   }
 }

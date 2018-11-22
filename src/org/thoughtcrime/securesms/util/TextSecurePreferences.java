@@ -3,19 +3,25 @@ package org.thoughtcrime.securesms.util;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.hardware.Camera.CameraInfo;
+import android.net.Uri;
 import android.os.Build;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
 import android.support.annotation.ArrayRes;
 import android.support.annotation.NonNull;
-import android.util.Log;
+import android.support.annotation.Nullable;
+import android.support.v4.app.NotificationCompat;
+import org.thoughtcrime.securesms.logging.Log;
 
-import com.h6ah4i.android.compat.content.SharedPreferenceCompat;
-
+import org.greenrobot.eventbus.EventBus;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.preferences.NotificationPrivacyPreference;
+import org.thoughtcrime.securesms.jobs.requirements.SqlCipherMigrationRequirementProvider;
+import org.thoughtcrime.securesms.lock.RegistrationLockReminders;
+import org.thoughtcrime.securesms.preferences.widgets.NotificationPrivacyPreference;
+import org.whispersystems.libsignal.util.Medium;
 
 import java.io.IOException;
+import java.security.SecureRandom;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
@@ -46,8 +52,9 @@ public class TextSecurePreferences {
 
   private static final String LAST_VERSION_CODE_PREF           = "last_version_code";
   private static final String LAST_EXPERIENCE_VERSION_PREF     = "last_experience_version_code";
+  private static final String EXPERIENCE_DISMISSED_PREF        = "experience_dismissed";
   public  static final String RINGTONE_PREF                    = "pref_key_ringtone";
-  private static final String VIBRATE_PREF                     = "pref_key_vibrate";
+  public  static final String VIBRATE_PREF                     = "pref_key_vibrate";
   private static final String NOTIFICATION_PREF                = "pref_key_enable_notifications";
   public  static final String LED_COLOR_PREF                   = "pref_led_color";
   public  static final String LED_BLINK_PREF                   = "pref_led_blink";
@@ -55,7 +62,7 @@ public class TextSecurePreferences {
   public  static final String ALL_MMS_PREF                     = "pref_all_mms";
   public  static final String ALL_SMS_PREF                     = "pref_all_sms";
   public  static final String PASSPHRASE_TIMEOUT_INTERVAL_PREF = "pref_timeout_interval";
-  private static final String PASSPHRASE_TIMEOUT_PREF          = "pref_timeout_passphrase";
+  public  static final String PASSPHRASE_TIMEOUT_PREF          = "pref_timeout_passphrase";
   public  static final String SCREEN_SECURITY_PREF             = "pref_screen_security";
   private static final String ENTER_SENDS_PREF                 = "pref_enter_sends";
   private static final String ENTER_PRESENT_PREF               = "pref_enter_key";
@@ -69,23 +76,37 @@ public class TextSecurePreferences {
   private static final String GCM_PASSWORD_PREF                = "pref_gcm_password";
   private static final String PROMPTED_PUSH_REGISTRATION_PREF  = "pref_prompted_push_registration";
   private static final String PROMPTED_DEFAULT_SMS_PREF        = "pref_prompted_default_sms";
+  private static final String PROMPTED_OPTIMIZE_DOZE_PREF      = "pref_prompted_optimize_doze";
   private static final String PROMPTED_SHARE_PREF              = "pref_prompted_share";
   private static final String SIGNALING_KEY_PREF               = "pref_signaling_key";
   private static final String DIRECTORY_FRESH_TIME_PREF        = "pref_directory_refresh_time";
+  private static final String UPDATE_APK_REFRESH_TIME_PREF     = "pref_update_apk_refresh_time";
+  private static final String UPDATE_APK_DOWNLOAD_ID           = "pref_update_apk_download_id";
+  private static final String UPDATE_APK_DIGEST                = "pref_update_apk_digest";
+  private static final String SIGNED_PREKEY_ROTATION_TIME_PREF = "pref_signed_pre_key_rotation_time";
+
   private static final String IN_THREAD_NOTIFICATION_PREF      = "pref_key_inthread_notifications";
+  private static final String SHOW_INVITE_REMINDER_PREF        = "pref_show_invite_reminder";
+  public  static final String MESSAGE_BODY_TEXT_SIZE_PREF      = "pref_message_body_text_size";
 
   private static final String LOCAL_REGISTRATION_ID_PREF       = "pref_local_registration_id";
   private static final String SIGNED_PREKEY_REGISTERED_PREF    = "pref_signed_prekey_registered";
   private static final String WIFI_SMS_PREF                    = "pref_wifi_sms";
 
+  private static final String GCM_DISABLED_PREF                = "pref_gcm_disabled";
   private static final String GCM_REGISTRATION_ID_PREF         = "pref_gcm_registration_id";
   private static final String GCM_REGISTRATION_ID_VERSION_PREF = "pref_gcm_registration_id_version";
+  private static final String GCM_REGISTRATION_ID_TIME_PREF    = "pref_gcm_registration_id_last_set_time";
   private static final String WEBSOCKET_REGISTERED_PREF        = "pref_websocket_registered";
   private static final String RATING_LATER_PREF                = "pref_rating_later";
   private static final String RATING_ENABLED_PREF              = "pref_rating_enabled";
+  private static final String SIGNED_PREKEY_FAILURE_COUNT_PREF = "pref_signed_prekey_failure_count";
 
   public  static final String REPEAT_ALERTS_PREF               = "pref_repeat_alerts";
   public  static final String NOTIFICATION_PRIVACY_PREF        = "pref_notification_privacy";
+  public  static final String NOTIFICATION_PRIORITY_PREF       = "pref_notification_priority";
+  public  static final String NEW_CONTACTS_NOTIFICATIONS       = "pref_enable_new_contacts_notifications";
+  public  static final String WEBRTC_CALLING_PREF              = "pref_webrtc_calling";
 
   public  static final String MEDIA_DOWNLOAD_MOBILE_PREF       = "pref_media_download_mobile";
   public  static final String MEDIA_DOWNLOAD_WIFI_PREF         = "pref_media_download_wifi";
@@ -94,6 +115,288 @@ public class TextSecurePreferences {
   public  static final String SYSTEM_EMOJI_PREF                = "pref_system_emoji";
   private static final String MULTI_DEVICE_PROVISIONED_PREF    = "pref_multi_device";
   public  static final String DIRECT_CAPTURE_CAMERA_ID         = "pref_direct_capture_camera_id";
+  private static final String ALWAYS_RELAY_CALLS_PREF          = "pref_turn_only";
+  private static final String PROFILE_KEY_PREF                 = "pref_profile_key";
+  private static final String PROFILE_NAME_PREF                = "pref_profile_name";
+  private static final String PROFILE_AVATAR_ID_PREF           = "pref_profile_avatar_id";
+  public  static final String READ_RECEIPTS_PREF               = "pref_read_receipts";
+  public  static final String INCOGNITO_KEYBORAD_PREF          = "pref_incognito_keyboard";
+  private static final String UNAUTHORIZED_RECEIVED            = "pref_unauthorized_received";
+  private static final String SUCCESSFUL_DIRECTORY_PREF        = "pref_successful_directory";
+
+  private static final String DATABASE_ENCRYPTED_SECRET     = "pref_database_encrypted_secret";
+  private static final String DATABASE_UNENCRYPTED_SECRET   = "pref_database_unencrypted_secret";
+  private static final String ATTACHMENT_ENCRYPTED_SECRET   = "pref_attachment_encrypted_secret";
+  private static final String ATTACHMENT_UNENCRYPTED_SECRET = "pref_attachment_unencrypted_secret";
+  private static final String NEEDS_SQLCIPHER_MIGRATION     = "pref_needs_sql_cipher_migration";
+
+  public static final String CALL_NOTIFICATIONS_PREF = "pref_call_notifications";
+  public static final String CALL_RINGTONE_PREF      = "pref_call_ringtone";
+  public static final String CALL_VIBRATE_PREF       = "pref_call_vibrate";
+
+  private static final String NEXT_PRE_KEY_ID          = "pref_next_pre_key_id";
+  private static final String ACTIVE_SIGNED_PRE_KEY_ID = "pref_active_signed_pre_key_id";
+  private static final String NEXT_SIGNED_PRE_KEY_ID   = "pref_next_signed_pre_key_id";
+
+  public  static final String BACKUP_ENABLED    = "pref_backup_enabled";
+  private static final String BACKUP_PASSPHRASE = "pref_backup_passphrase";
+  private static final String BACKUP_TIME       = "pref_backup_next_time";
+  public  static final String BACKUP_NOW        = "pref_backup_create";
+
+  public static final String SCREEN_LOCK         = "pref_android_screen_lock";
+  public static final String SCREEN_LOCK_TIMEOUT = "pref_android_screen_lock_timeout";
+
+  public static final  String REGISTRATION_LOCK_PREF                   = "pref_registration_lock";
+  private static final String REGISTRATION_LOCK_PIN_PREF               = "pref_registration_lock_pin";
+  private static final String REGISTRATION_LOCK_LAST_REMINDER_TIME     = "pref_registration_lock_last_reminder_time";
+  private static final String REGISTRATION_LOCK_NEXT_REMINDER_INTERVAL = "pref_registration_lock_next_reminder_interval";
+
+  private static final String SERVICE_OUTAGE         = "pref_service_outage";
+  private static final String LAST_OUTAGE_CHECK_TIME = "pref_last_outage_check_time";
+
+  private static final String LAST_FULL_CONTACT_SYNC_TIME = "pref_last_full_contact_sync_time";
+  private static final String NEEDS_FULL_CONTACT_SYNC     = "pref_needs_full_contact_sync";
+
+  private static final String LOG_ENCRYPTED_SECRET   = "pref_log_encrypted_secret";
+  private static final String LOG_UNENCRYPTED_SECRET = "pref_log_unencrypted_secret";
+
+  private static final String NOTIFICATION_CHANNEL_VERSION          = "pref_notification_channel_version";
+  private static final String NOTIFICATION_MESSAGES_CHANNEL_VERSION = "pref_notification_messages_channel_version";
+
+  private static final String NEEDS_MESSAGE_PULL = "pref_needs_message_pull";
+
+  private static final String UNIDENTIFIED_ACCESS_CERTIFICATE_ROTATION_TIME_PREF = "pref_unidentified_access_certificate_rotation_time";
+  private static final String UNIDENTIFIED_ACCESS_CERTIFICATE                    = "pref_unidentified_access_certificate";
+  public  static final String UNIVERSAL_UNIDENTIFIED_ACCESS                      = "pref_universal_unidentified_access";
+  public  static final String SHOW_UNIDENTIFIED_DELIVERY_INDICATORS              = "pref_show_unidentifed_delivery_indicators";
+  private static final String UNIDENTIFIED_DELIVERY_ENABLED                      = "pref_unidentified_delivery_enabled";
+
+  public static final String TYPING_INDICATORS = "pref_typing_indicators";
+
+  public static boolean isScreenLockEnabled(@NonNull Context context) {
+    return getBooleanPreference(context, SCREEN_LOCK, false);
+  }
+
+  public static void setScreenLockEnabled(@NonNull Context context, boolean value) {
+    setBooleanPreference(context, SCREEN_LOCK, value);
+  }
+
+  public static long getScreenLockTimeout(@NonNull Context context) {
+    return getLongPreference(context, SCREEN_LOCK_TIMEOUT, 0);
+  }
+
+  public static void setScreenLockTimeout(@NonNull Context context, long value) {
+    setLongPreference(context, SCREEN_LOCK_TIMEOUT, value);
+  }
+
+  public static boolean isRegistrationtLockEnabled(@NonNull Context context) {
+    return getBooleanPreference(context, REGISTRATION_LOCK_PREF, false);
+  }
+
+  public static void setRegistrationtLockEnabled(@NonNull Context context, boolean value) {
+    setBooleanPreference(context, REGISTRATION_LOCK_PREF, value);
+  }
+
+  public static @Nullable String getRegistrationLockPin(@NonNull Context context) {
+    return getStringPreference(context, REGISTRATION_LOCK_PIN_PREF, null);
+  }
+
+  public static void setRegistrationLockPin(@NonNull Context context, String pin) {
+    setStringPreference(context, REGISTRATION_LOCK_PIN_PREF, pin);
+  }
+
+  public static long getRegistrationLockLastReminderTime(@NonNull Context context) {
+    return getLongPreference(context, REGISTRATION_LOCK_LAST_REMINDER_TIME, 0);
+  }
+
+  public static void setRegistrationLockLastReminderTime(@NonNull Context context, long time) {
+    setLongPreference(context, REGISTRATION_LOCK_LAST_REMINDER_TIME, time);
+  }
+
+  public static long getRegistrationLockNextReminderInterval(@NonNull Context context) {
+    return getLongPreference(context, REGISTRATION_LOCK_NEXT_REMINDER_INTERVAL, RegistrationLockReminders.INITIAL_INTERVAL);
+  }
+
+  public static void setRegistrationLockNextReminderInterval(@NonNull Context context, long value) {
+    setLongPreference(context, REGISTRATION_LOCK_NEXT_REMINDER_INTERVAL, value);
+  }
+
+  public static void setBackupPassphrase(@NonNull Context context, @Nullable String passphrase) {
+    setStringPreference(context, BACKUP_PASSPHRASE, passphrase);
+  }
+
+  public static @Nullable String getBackupPassphrase(@NonNull Context context) {
+    return getStringPreference(context, BACKUP_PASSPHRASE, null);
+  }
+
+  public static void setBackupEnabled(@NonNull Context context, boolean value) {
+    setBooleanPreference(context, BACKUP_ENABLED, value);
+  }
+
+  public static boolean isBackupEnabled(@NonNull Context context) {
+    return getBooleanPreference(context, BACKUP_ENABLED, false);
+  }
+
+  public static void setNextBackupTime(@NonNull Context context, long time) {
+    setLongPreference(context, BACKUP_TIME, time);
+  }
+
+  public static long getNextBackupTime(@NonNull Context context) {
+    return getLongPreference(context, BACKUP_TIME, -1);
+  }
+
+  public static int getNextPreKeyId(@NonNull Context context) {
+    return getIntegerPreference(context, NEXT_PRE_KEY_ID, new SecureRandom().nextInt(Medium.MAX_VALUE));
+  }
+
+  public static void setNextPreKeyId(@NonNull Context context, int value) {
+    setIntegerPrefrence(context, NEXT_PRE_KEY_ID, value);
+  }
+
+  public static int getNextSignedPreKeyId(@NonNull Context context) {
+    return getIntegerPreference(context, NEXT_SIGNED_PRE_KEY_ID, new SecureRandom().nextInt(Medium.MAX_VALUE));
+  }
+
+  public static void setNextSignedPreKeyId(@NonNull Context context, int value) {
+    setIntegerPrefrence(context, NEXT_SIGNED_PRE_KEY_ID, value);
+  }
+
+  public static int getActiveSignedPreKeyId(@NonNull Context context) {
+    return getIntegerPreference(context, ACTIVE_SIGNED_PRE_KEY_ID, -1);
+  }
+
+  public static void setActiveSignedPreKeyId(@NonNull Context context, int value) {
+    setIntegerPrefrence(context, ACTIVE_SIGNED_PRE_KEY_ID, value);;
+  }
+
+  public static void setNeedsSqlCipherMigration(@NonNull Context context, boolean value) {
+    setBooleanPreference(context, NEEDS_SQLCIPHER_MIGRATION, value);
+    EventBus.getDefault().post(new SqlCipherMigrationRequirementProvider.SqlCipherNeedsMigrationEvent());
+  }
+
+  public static boolean getNeedsSqlCipherMigration(@NonNull Context context) {
+    return getBooleanPreference(context, NEEDS_SQLCIPHER_MIGRATION, false);
+  }
+
+  public static void setAttachmentEncryptedSecret(@NonNull Context context, @NonNull String secret) {
+    setStringPreference(context, ATTACHMENT_ENCRYPTED_SECRET, secret);
+  }
+
+  public static void setAttachmentUnencryptedSecret(@NonNull Context context, @Nullable String secret) {
+    setStringPreference(context, ATTACHMENT_UNENCRYPTED_SECRET, secret);
+  }
+
+  public static @Nullable String getAttachmentEncryptedSecret(@NonNull Context context) {
+    return getStringPreference(context, ATTACHMENT_ENCRYPTED_SECRET, null);
+  }
+
+  public static @Nullable String getAttachmentUnencryptedSecret(@NonNull Context context) {
+    return getStringPreference(context, ATTACHMENT_UNENCRYPTED_SECRET, null);
+  }
+
+  public static void setDatabaseEncryptedSecret(@NonNull Context context, @NonNull String secret) {
+    setStringPreference(context, DATABASE_ENCRYPTED_SECRET, secret);
+  }
+
+  public static void setDatabaseUnencryptedSecret(@NonNull Context context, @Nullable String secret) {
+    setStringPreference(context, DATABASE_UNENCRYPTED_SECRET, secret);
+  }
+
+  public static @Nullable String getDatabaseUnencryptedSecret(@NonNull Context context) {
+    return getStringPreference(context, DATABASE_UNENCRYPTED_SECRET, null);
+  }
+
+  public static @Nullable String getDatabaseEncryptedSecret(@NonNull Context context) {
+    return getStringPreference(context, DATABASE_ENCRYPTED_SECRET, null);
+  }
+
+  public static void setHasSuccessfullyRetrievedDirectory(Context context, boolean value) {
+    setBooleanPreference(context, SUCCESSFUL_DIRECTORY_PREF, value);
+  }
+
+  public static boolean hasSuccessfullyRetrievedDirectory(Context context) {
+    return getBooleanPreference(context, SUCCESSFUL_DIRECTORY_PREF, false);
+  }
+
+  public static void setUnauthorizedReceived(Context context, boolean value) {
+    setBooleanPreference(context, UNAUTHORIZED_RECEIVED, value);
+  }
+
+  public static boolean isUnauthorizedRecieved(Context context) {
+    return getBooleanPreference(context, UNAUTHORIZED_RECEIVED, false);
+  }
+
+  public static boolean isIncognitoKeyboardEnabled(Context context) {
+    return getBooleanPreference(context, INCOGNITO_KEYBORAD_PREF, false);
+  }
+
+  public static boolean isReadReceiptsEnabled(Context context) {
+    return getBooleanPreference(context, READ_RECEIPTS_PREF, false);
+  }
+
+  public static void setReadReceiptsEnabled(Context context, boolean enabled) {
+    setBooleanPreference(context, READ_RECEIPTS_PREF, enabled);
+  }
+
+  public static boolean isTypingIndicatorsEnabled(Context context) {
+    return getBooleanPreference(context, TYPING_INDICATORS, false);
+  }
+
+  public static void setTypingIndicatorsEnabled(Context context, boolean enabled) {
+    setBooleanPreference(context, TYPING_INDICATORS, enabled);
+  }
+
+  public static @Nullable String getProfileKey(Context context) {
+    return getStringPreference(context, PROFILE_KEY_PREF, null);
+  }
+
+  public static void setProfileKey(Context context, String key) {
+    setStringPreference(context, PROFILE_KEY_PREF, key);
+  }
+
+  public static void setProfileName(Context context, String name) {
+    setStringPreference(context, PROFILE_NAME_PREF, name);
+  }
+
+  public static String getProfileName(Context context) {
+    return getStringPreference(context, PROFILE_NAME_PREF, null);
+  }
+
+  public static void setProfileAvatarId(Context context, int id) {
+    setIntegerPrefrence(context, PROFILE_AVATAR_ID_PREF, id);
+  }
+
+  public static int getProfileAvatarId(Context context) {
+    return getIntegerPreference(context, PROFILE_AVATAR_ID_PREF, 0);
+  }
+
+  public static int getNotificationPriority(Context context) {
+    return Integer.valueOf(getStringPreference(context, NOTIFICATION_PRIORITY_PREF, String.valueOf(NotificationCompat.PRIORITY_HIGH)));
+  }
+
+  public static int getMessageBodyTextSize(Context context) {
+    return Integer.valueOf(getStringPreference(context, MESSAGE_BODY_TEXT_SIZE_PREF, "16"));
+  }
+
+  public static boolean isTurnOnly(Context context) {
+    return getBooleanPreference(context, ALWAYS_RELAY_CALLS_PREF, false);
+  }
+
+  public static boolean isGcmDisabled(Context context) {
+    return getBooleanPreference(context, GCM_DISABLED_PREF, false);
+  }
+
+  public static void setGcmDisabled(Context context, boolean disabled) {
+    setBooleanPreference(context, GCM_DISABLED_PREF, disabled);
+  }
+
+  public static boolean isWebrtcCallingEnabled(Context context) {
+    return getBooleanPreference(context, WEBRTC_CALLING_PREF, false);
+  }
+
+  public static void setWebrtcCallingEnabled(Context context, boolean enabled) {
+    setBooleanPreference(context, WEBRTC_CALLING_PREF, enabled);
+  }
 
   public static void setDirectCaptureCameraId(Context context, int value) {
     setIntegerPrefrence(context, DIRECT_CAPTURE_CAMERA_ID, value);
@@ -112,8 +415,20 @@ public class TextSecurePreferences {
     return getBooleanPreference(context, MULTI_DEVICE_PROVISIONED_PREF, false);
   }
 
+  public static void setSignedPreKeyFailureCount(Context context, int value) {
+    setIntegerPrefrence(context, SIGNED_PREKEY_FAILURE_COUNT_PREF, value);
+  }
+
+  public static int getSignedPreKeyFailureCount(Context context) {
+    return getIntegerPreference(context, SIGNED_PREKEY_FAILURE_COUNT_PREF, 0);
+  }
+
   public static NotificationPrivacyPreference getNotificationPrivacy(Context context) {
     return new NotificationPrivacyPreference(getStringPreference(context, NOTIFICATION_PRIVACY_PREF, "all"));
+  }
+
+  public static boolean isNewContactsNotificationEnabled(Context context) {
+    return getBooleanPreference(context, NEW_CONTACTS_NOTIFICATIONS, true);
   }
 
   public static long getRatingLaterTimestamp(Context context) {
@@ -180,6 +495,14 @@ public class TextSecurePreferences {
     }
   }
 
+  public static long getGcmRegistrationIdLastSetTime(Context context) {
+    return getLongPreference(context, GCM_REGISTRATION_ID_TIME_PREF, 0);
+  }
+
+  public static void setGcmRegistrationIdLastSetTime(Context context, long timestamp) {
+    setLongPreference(context, GCM_REGISTRATION_ID_TIME_PREF, timestamp);
+  }
+
   public static boolean isSmsEnabled(Context context) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
       return Util.isDefaultSmsProvider(context);
@@ -200,6 +523,55 @@ public class TextSecurePreferences {
     return getBooleanPreference(context, IN_THREAD_NOTIFICATION_PREF, true);
   }
 
+  public static long getUnidentifiedAccessCertificateRotationTime(Context context) {
+    return getLongPreference(context, UNIDENTIFIED_ACCESS_CERTIFICATE_ROTATION_TIME_PREF, 0L);
+  }
+
+  public static void setUnidentifiedAccessCertificateRotationTime(Context context, long value) {
+    setLongPreference(context, UNIDENTIFIED_ACCESS_CERTIFICATE_ROTATION_TIME_PREF, value);
+  }
+
+  public static void setUnidentifiedAccessCertificate(Context context, byte[] value) {
+    setStringPreference(context, UNIDENTIFIED_ACCESS_CERTIFICATE, Base64.encodeBytes(value));
+  }
+
+  public static byte[] getUnidentifiedAccessCertificate(Context context) {
+    try {
+      String result = getStringPreference(context, UNIDENTIFIED_ACCESS_CERTIFICATE, null);
+      if (result != null) {
+        return Base64.decode(result);
+      }
+    } catch (IOException e) {
+      Log.w(TAG, e);
+    }
+
+    return null;
+  }
+
+  public static boolean isUniversalUnidentifiedAccess(Context context) {
+    return getBooleanPreference(context, UNIVERSAL_UNIDENTIFIED_ACCESS, false);
+  }
+
+  public static boolean isShowUnidentifiedDeliveryIndicatorsEnabled(Context context) {
+    return getBooleanPreference(context, SHOW_UNIDENTIFIED_DELIVERY_INDICATORS, false);
+  }
+
+  public static void setIsUnidentifiedDeliveryEnabled(Context context, boolean enabled) {
+    setBooleanPreference(context, UNIDENTIFIED_DELIVERY_ENABLED, enabled);
+  }
+
+  public static boolean isUnidentifiedDeliveryEnabled(Context context) {
+    return getBooleanPreference(context, UNIDENTIFIED_DELIVERY_ENABLED, true);
+  }
+
+  public static long getSignedPreKeyRotationTime(Context context) {
+    return getLongPreference(context, SIGNED_PREKEY_ROTATION_TIME_PREF, 0L);
+  }
+
+  public static void setSignedPreKeyRotationTime(Context context, long value) {
+    setLongPreference(context, SIGNED_PREKEY_ROTATION_TIME_PREF, value);
+  }
+
   public static long getDirectoryRefreshTime(Context context) {
     return getLongPreference(context, DIRECTORY_FRESH_TIME_PREF, 0L);
   }
@@ -208,8 +580,32 @@ public class TextSecurePreferences {
     setLongPreference(context, DIRECTORY_FRESH_TIME_PREF, value);
   }
 
+  public static long getUpdateApkRefreshTime(Context context) {
+    return getLongPreference(context, UPDATE_APK_REFRESH_TIME_PREF, 0L);
+  }
+
+  public static void setUpdateApkRefreshTime(Context context, long value) {
+    setLongPreference(context, UPDATE_APK_REFRESH_TIME_PREF, value);
+  }
+
+  public static void setUpdateApkDownloadId(Context context, long value) {
+    setLongPreference(context, UPDATE_APK_DOWNLOAD_ID, value);
+  }
+
+  public static long getUpdateApkDownloadId(Context context) {
+    return getLongPreference(context, UPDATE_APK_DOWNLOAD_ID, -1);
+  }
+
+  public static void setUpdateApkDigest(Context context, String value) {
+    setStringPreference(context, UPDATE_APK_DIGEST, value);
+  }
+
+  public static String getUpdateApkDigest(Context context) {
+    return getStringPreference(context, UPDATE_APK_DIGEST, null);
+  }
+
   public static String getLocalNumber(Context context) {
-    return getStringPreference(context, LOCAL_NUMBER_PREF, "No Stored Number");
+    return getStringPreference(context, LOCAL_NUMBER_PREF, null);
   }
 
   public static void setLocalNumber(Context context, String localNumber) {
@@ -348,8 +744,12 @@ public class TextSecurePreferences {
     setStringPreference(context, IDENTITY_PREF, identityUri);
   }
 
+  public static void setScreenSecurityEnabled(Context context, boolean value) {
+    setBooleanPreference(context, SCREEN_SECURITY_PREF, value);
+  }
+
   public static boolean isScreenSecurityEnabled(Context context) {
-    return getBooleanPreference(context, SCREEN_SECURITY_PREF, true);
+    return getBooleanPreference(context, SCREEN_SECURITY_PREF, false);
   }
 
   public static boolean isLegacyUseLocalApnsEnabled(Context context) {
@@ -374,6 +774,14 @@ public class TextSecurePreferences {
     setIntegerPrefrence(context, LAST_EXPERIENCE_VERSION_PREF, versionCode);
   }
 
+  public static int getExperienceDismissedVersionCode(Context context) {
+    return getIntegerPreference(context, EXPERIENCE_DISMISSED_PREF, 0);
+  }
+
+  public static void setExperienceDismissedVersionCode(Context context, int versionCode) {
+    setIntegerPrefrence(context, EXPERIENCE_DISMISSED_PREF, versionCode);
+  }
+
   public static String getTheme(Context context) {
     return getStringPreference(context, THEME_PREF, "light");
   }
@@ -391,8 +799,12 @@ public class TextSecurePreferences {
   }
 
   public static void setPushRegistered(Context context, boolean registered) {
-    Log.w("TextSecurePreferences", "Setting push registered: " + registered);
+    Log.i(TAG, "Setting push registered: " + registered);
     setBooleanPreference(context, REGISTERED_GCM_PREF, registered);
+  }
+
+  public static boolean isShowInviteReminders(Context context) {
+    return getBooleanPreference(context, SHOW_INVITE_REMINDER_PREF, true);
   }
 
   public static boolean isPassphraseTimeoutEnabled(Context context) {
@@ -435,6 +847,14 @@ public class TextSecurePreferences {
     setBooleanPreference(context, PROMPTED_DEFAULT_SMS_PREF, value);
   }
 
+  public static void setPromptedOptimizeDoze(Context context, boolean value) {
+    setBooleanPreference(context, PROMPTED_OPTIMIZE_DOZE_PREF, value);
+  }
+
+  public static boolean hasPromptedOptimizeDoze(Context context) {
+    return getBooleanPreference(context, PROMPTED_OPTIMIZE_DOZE_PREF, false);
+  }
+
   public static boolean hasPromptedShare(Context context) {
     return getBooleanPreference(context, PROMPTED_SHARE_PREF, false);
   }
@@ -455,12 +875,62 @@ public class TextSecurePreferences {
     return getBooleanPreference(context, NOTIFICATION_PREF, true);
   }
 
-  public static String getNotificationRingtone(Context context) {
-    return getStringPreference(context, RINGTONE_PREF, Settings.System.DEFAULT_NOTIFICATION_URI.toString());
+  public static boolean isCallNotificationsEnabled(Context context) {
+    return getBooleanPreference(context, CALL_NOTIFICATIONS_PREF, true);
+  }
+
+  public static @NonNull Uri getNotificationRingtone(Context context) {
+    String result = getStringPreference(context, RINGTONE_PREF, Settings.System.DEFAULT_NOTIFICATION_URI.toString());
+
+    if (result != null && result.startsWith("file:")) {
+      result = Settings.System.DEFAULT_NOTIFICATION_URI.toString();
+    }
+
+    return Uri.parse(result);
+  }
+
+  public static @NonNull Uri getCallNotificationRingtone(Context context) {
+    String result = getStringPreference(context, CALL_RINGTONE_PREF, Settings.System.DEFAULT_RINGTONE_URI.toString());
+
+    if (result != null && result.startsWith("file:")) {
+      result = Settings.System.DEFAULT_RINGTONE_URI.toString();
+    }
+
+    return Uri.parse(result);
+  }
+
+  public static void removeNotificationRingtone(Context context) {
+    removePreference(context, RINGTONE_PREF);
+  }
+
+  public static void removeCallNotificationRingtone(Context context) {
+    removePreference(context, CALL_RINGTONE_PREF);
+  }
+
+  public static void setNotificationRingtone(Context context, String ringtone) {
+    setStringPreference(context, RINGTONE_PREF, ringtone);
+  }
+
+  public static void setCallNotificationRingtone(Context context, String ringtone) {
+    setStringPreference(context, CALL_RINGTONE_PREF, ringtone);
+  }
+
+  public static void setNotificationVibrateEnabled(Context context, boolean enabled) {
+    setBooleanPreference(context, VIBRATE_PREF, enabled);
   }
 
   public static boolean isNotificationVibrateEnabled(Context context) {
     return getBooleanPreference(context, VIBRATE_PREF, true);
+  }
+
+  public static boolean isCallNotificationVibrateEnabled(Context context) {
+    boolean defaultValue = true;
+
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+      defaultValue = (Settings.System.getInt(context.getContentResolver(), Settings.System.VIBRATE_WHEN_RINGING, 1) == 1);
+    }
+
+    return getBooleanPreference(context, CALL_VIBRATE_PREF, defaultValue);
   }
 
   public static String getNotificationLedColor(Context context) {
@@ -509,6 +979,78 @@ public class TextSecurePreferences {
                                   new HashSet<>(Arrays.asList(context.getResources().getStringArray(defaultValuesRes))));
   }
 
+  public static void setLastOutageCheckTime(Context context, long timestamp) {
+    setLongPreference(context, LAST_OUTAGE_CHECK_TIME, timestamp);
+  }
+
+  public static long getLastOutageCheckTime(Context context) {
+    return getLongPreference(context, LAST_OUTAGE_CHECK_TIME, 0);
+  }
+
+  public static void setServiceOutage(Context context, boolean isOutage) {
+    setBooleanPreference(context, SERVICE_OUTAGE, isOutage);
+  }
+
+  public static boolean getServiceOutage(Context context) {
+    return getBooleanPreference(context, SERVICE_OUTAGE, false);
+  }
+
+  public static long getLastFullContactSyncTime(Context context) {
+    return getLongPreference(context, LAST_FULL_CONTACT_SYNC_TIME, 0);
+  }
+
+  public static void setLastFullContactSyncTime(Context context, long timestamp) {
+    setLongPreference(context, LAST_FULL_CONTACT_SYNC_TIME, timestamp);
+  }
+
+  public static boolean needsFullContactSync(Context context) {
+    return getBooleanPreference(context, NEEDS_FULL_CONTACT_SYNC, false);
+  }
+
+  public static void setNeedsFullContactSync(Context context, boolean needsSync) {
+    setBooleanPreference(context, NEEDS_FULL_CONTACT_SYNC, needsSync);
+  }
+
+  public static void setLogEncryptedSecret(Context context, String base64Secret) {
+    setStringPreference(context, LOG_ENCRYPTED_SECRET, base64Secret);
+  }
+
+  public static String getLogEncryptedSecret(Context context) {
+    return getStringPreference(context, LOG_ENCRYPTED_SECRET, null);
+  }
+
+  public static void setLogUnencryptedSecret(Context context, String base64Secret) {
+    setStringPreference(context, LOG_UNENCRYPTED_SECRET, base64Secret);
+  }
+
+  public static String getLogUnencryptedSecret(Context context) {
+    return getStringPreference(context, LOG_UNENCRYPTED_SECRET, null);
+  }
+
+  public static int getNotificationChannelVersion(Context context) {
+    return getIntegerPreference(context, NOTIFICATION_CHANNEL_VERSION, 1);
+  }
+
+  public static void setNotificationChannelVersion(Context context, int version) {
+    setIntegerPrefrence(context, NOTIFICATION_CHANNEL_VERSION, version);
+  }
+
+  public static int getNotificationMessagesChannelVersion(Context context) {
+    return getIntegerPreference(context, NOTIFICATION_MESSAGES_CHANNEL_VERSION, 1);
+  }
+
+  public static void setNotificationMessagesChannelVersion(Context context, int version) {
+    setIntegerPrefrence(context, NOTIFICATION_MESSAGES_CHANNEL_VERSION, version);
+  }
+
+  public static boolean getNeedsMessagePull(Context context) {
+    return getBooleanPreference(context, NEEDS_MESSAGE_PULL, false);
+  }
+
+  public static void setNeedsMessagePull(Context context, boolean needsMessagePull) {
+    setBooleanPreference(context, NEEDS_MESSAGE_PULL, needsMessagePull);
+  }
+
   public static void setBooleanPreference(Context context, String key, boolean value) {
     PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(key, value).apply();
   }
@@ -545,12 +1087,14 @@ public class TextSecurePreferences {
     PreferenceManager.getDefaultSharedPreferences(context).edit().putLong(key, value).apply();
   }
 
+  private static void removePreference(Context context, String key) {
+    PreferenceManager.getDefaultSharedPreferences(context).edit().remove(key).apply();
+  }
+
   private static Set<String> getStringSetPreference(Context context, String key, Set<String> defaultValues) {
     final SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
     if (prefs.contains(key)) {
-      return SharedPreferenceCompat.getStringSet(PreferenceManager.getDefaultSharedPreferences(context),
-                                                 key,
-                                                 Collections.<String>emptySet());
+      return prefs.getStringSet(key, Collections.<String>emptySet());
     } else {
       return defaultValues;
     }

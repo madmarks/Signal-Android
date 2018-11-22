@@ -18,15 +18,17 @@ package org.thoughtcrime.securesms.database.model;
 
 import android.content.Context;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
 import android.text.SpannableString;
 
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.contactshare.Contact;
 import org.thoughtcrime.securesms.database.MmsDatabase;
+import org.thoughtcrime.securesms.database.SmsDatabase.Status;
 import org.thoughtcrime.securesms.database.documents.IdentityKeyMismatch;
 import org.thoughtcrime.securesms.database.documents.NetworkFailure;
 import org.thoughtcrime.securesms.mms.SlideDeck;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.recipients.Recipients;
 
 import java.util.List;
 
@@ -38,46 +40,34 @@ import java.util.List;
  *
  */
 
-public class MediaMmsMessageRecord extends MessageRecord {
+public class MediaMmsMessageRecord extends MmsMessageRecord {
   private final static String TAG = MediaMmsMessageRecord.class.getSimpleName();
 
   private final Context context;
-  private final int partCount;
-  private final @NonNull SlideDeck slideDeck;
+  private final int     partCount;
 
-  public MediaMmsMessageRecord(Context context, long id, Recipients recipients,
+  public MediaMmsMessageRecord(Context context, long id, Recipient conversationRecipient,
                                Recipient individualRecipient, int recipientDeviceId,
-                               long dateSent, long dateReceived, int deliveredCount,
-                               long threadId, Body body,
+                               long dateSent, long dateReceived, int deliveryReceiptCount,
+                               long threadId, String body,
                                @NonNull SlideDeck slideDeck,
                                int partCount, long mailbox,
                                List<IdentityKeyMismatch> mismatches,
-                               List<NetworkFailure> failures)
+                               List<NetworkFailure> failures, int subscriptionId,
+                               long expiresIn, long expireStarted, int readReceiptCount,
+                               @Nullable Quote quote, @Nullable List<Contact> contacts,
+                               boolean unidentified)
   {
-    super(context, id, body, recipients, individualRecipient, recipientDeviceId,
-          dateSent, dateReceived, threadId, DELIVERY_STATUS_NONE, deliveredCount, mailbox,
-          mismatches, failures);
+    super(context, id, body, conversationRecipient, individualRecipient, recipientDeviceId, dateSent,
+          dateReceived, threadId, Status.STATUS_NONE, deliveryReceiptCount, mailbox, mismatches, failures,
+          subscriptionId, expiresIn, expireStarted, slideDeck, readReceiptCount, quote, contacts, unidentified);
 
     this.context   = context.getApplicationContext();
     this.partCount = partCount;
-    this.slideDeck = slideDeck;
-  }
-
-  public @NonNull SlideDeck getSlideDeck() {
-    return slideDeck;
-  }
-
-  public boolean containsMediaSlide() {
-    return slideDeck.containsMediaSlide();
   }
 
   public int getPartCount() {
     return partCount;
-  }
-
-  @Override
-  public boolean isMms() {
-    return true;
   }
 
   @Override
@@ -87,9 +77,7 @@ public class MediaMmsMessageRecord extends MessageRecord {
 
   @Override
   public SpannableString getDisplayBody() {
-    if (MmsDatabase.Types.isDecryptInProgressType(type)) {
-      return emphasisAdded(context.getString(R.string.MmsMessageRecord_decrypting_mms_please_wait));
-    } else if (MmsDatabase.Types.isFailedDecryptType(type)) {
+    if (MmsDatabase.Types.isFailedDecryptType(type)) {
       return emphasisAdded(context.getString(R.string.MmsMessageRecord_bad_encrypted_mms_message));
     } else if (MmsDatabase.Types.isDuplicateMessageType(type)) {
       return emphasisAdded(context.getString(R.string.SmsMessageRecord_duplicate_message));
@@ -97,8 +85,6 @@ public class MediaMmsMessageRecord extends MessageRecord {
       return emphasisAdded(context.getString(R.string.MmsMessageRecord_mms_message_encrypted_for_non_existing_session));
     } else if (isLegacyMessage()) {
       return emphasisAdded(context.getString(R.string.MessageRecord_message_encrypted_with_a_legacy_protocol_version_that_is_no_longer_supported));
-    } else if (!getBody().isPlaintext()) {
-      return emphasisAdded(context.getString(R.string.MessageNotifier_locked_message));
     }
 
     return super.getDisplayBody();

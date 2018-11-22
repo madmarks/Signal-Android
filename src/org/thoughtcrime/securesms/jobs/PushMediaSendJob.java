@@ -1,29 +1,36 @@
 package org.thoughtcrime.securesms.jobs;
 
 import android.content.Context;
-import android.util.Log;
+import android.support.annotation.NonNull;
 
 import org.thoughtcrime.securesms.ApplicationContext;
 import org.thoughtcrime.securesms.attachments.Attachment;
-import org.thoughtcrime.securesms.crypto.MasterSecret;
+import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
+import org.thoughtcrime.securesms.database.Address;
 import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.database.MmsDatabase;
 import org.thoughtcrime.securesms.database.NoSuchMessageException;
+import org.thoughtcrime.securesms.database.RecipientDatabase.UnidentifiedAccessMode;
 import org.thoughtcrime.securesms.dependencies.InjectableType;
+import org.thoughtcrime.securesms.jobmanager.SafeData;
+import org.thoughtcrime.securesms.logging.Log;
 import org.thoughtcrime.securesms.mms.MediaConstraints;
+import org.thoughtcrime.securesms.mms.MmsException;
 import org.thoughtcrime.securesms.mms.OutgoingMediaMessage;
-import org.thoughtcrime.securesms.recipients.RecipientFactory;
-import org.thoughtcrime.securesms.recipients.Recipients;
+import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.service.ExpiringMessageManager;
 import org.thoughtcrime.securesms.transport.InsecureFallbackApprovalException;
 import org.thoughtcrime.securesms.transport.RetryLaterException;
 import org.thoughtcrime.securesms.transport.UndeliverableMessageException;
-import org.whispersystems.textsecure.api.TextSecureMessageSender;
-import org.whispersystems.textsecure.api.crypto.UntrustedIdentityException;
-import org.whispersystems.textsecure.api.messages.TextSecureAttachment;
-import org.whispersystems.textsecure.api.messages.TextSecureDataMessage;
-import org.whispersystems.textsecure.api.push.TextSecureAddress;
-import org.whispersystems.textsecure.api.push.exceptions.UnregisteredUserException;
-import org.whispersystems.textsecure.api.util.InvalidNumberException;
+import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.whispersystems.libsignal.util.guava.Optional;
+import org.whispersystems.signalservice.api.SignalServiceMessageSender;
+import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
+import org.whispersystems.signalservice.api.messages.SignalServiceAttachment;
+import org.whispersystems.signalservice.api.messages.SignalServiceDataMessage;
+import org.whispersystems.signalservice.api.messages.shared.SharedContact;
+import org.whispersystems.signalservice.api.push.SignalServiceAddress;
+import org.whispersystems.signalservice.api.push.exceptions.UnregisteredUserException;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -31,9 +38,7 @@ import java.util.List;
 
 import javax.inject.Inject;
 
-import ws.com.google.android.mms.MmsException;
-
-import static org.thoughtcrime.securesms.dependencies.TextSecureCommunicationModule.TextSecureMessageSenderFactory;
+import androidx.work.Data;
 
 public class PushMediaSendJob extends PushSendJob implements InjectableType {
 
@@ -41,57 +46,98 @@ public class PushMediaSendJob extends PushSendJob implements InjectableType {
 
   private static final String TAG = PushMediaSendJob.class.getSimpleName();
 
-  @Inject transient TextSecureMessageSenderFactory messageSenderFactory;
+  private static final String KEY_MESSAGE_ID = "message_id";
 
-  private final long messageId;
+  @Inject transient SignalServiceMessageSender messageSender;
 
-  public PushMediaSendJob(Context context, long messageId, String destination) {
-    super(context, constructParameters(context, destination));
+  private long messageId;
+
+  public PushMediaSendJob() {
+    super(null, null);
+  }
+
+  public PushMediaSendJob(Context context, long messageId, Address destination) {
+    super(context, constructParameters(destination));
     this.messageId = messageId;
   }
 
   @Override
-  public void onAdded() {
-    MmsDatabase mmsDatabase = DatabaseFactory.getMmsDatabase(context);
-    mmsDatabase.markAsSending(messageId);
-    mmsDatabase.markAsPush(messageId);
+  protected void initialize(@NonNull SafeData data) {
+    messageId = data.getLong(KEY_MESSAGE_ID);
   }
 
   @Override
-  public void onSend(MasterSecret masterSecret)
+  protected @NonNull Data serialize(@NonNull Data.Builder dataBuilder) {
+    return dataBuilder.putLong(KEY_MESSAGE_ID, messageId).build();
+  }
+
+  @Override
+  protected void onAdded() {
+    DatabaseFactory.getMmsDatabase(context).markAsSending(messageId);
+  }
+
+  @Override
+  public void onPushSend()
       throws RetryLaterException, MmsException, NoSuchMessageException,
              UndeliverableMessageException
   {
-    MmsDatabase          database = DatabaseFactory.getMmsDatabase(context);
-    OutgoingMediaMessage message  = database.getOutgoingMessage(masterSecret, messageId);
+    ExpiringMessageManager expirationManager = ApplicationContext.getInstance(context).getExpiringMessageManager();
+    MmsDatabase            database          = DatabaseFactory.getMmsDatabase(context);
+    OutgoingMediaMessage   message           = database.getOutgoingMessage(messageId);
+
+    if (database.isSent(messageId)) {
+      Log.w(TAG, "Message " + messageId + " was already sent. Ignoring.");
+      return;
+    }
 
     try {
-      deliver(masterSecret, message);
-      database.markAsPush(messageId);
-      database.markAsSecure(messageId);
-      database.markAsSent(messageId);
+      Log.i(TAG, "Sending message: " + messageId);
+      
+      Recipient              recipient  = message.getRecipient().resolve();
+      byte[]                 profileKey = recipient.getProfileKey();
+      UnidentifiedAccessMode accessMode = recipient.getUnidentifiedAccessMode();
+
+      boolean unidentified = deliver(message);
+
+      database.markAsSent(messageId, true);
       markAttachmentsUploaded(messageId, message.getAttachments());
+      database.markUnidentified(messageId, unidentified);
+
+      if (TextSecurePreferences.isUnidentifiedDeliveryEnabled(context)) {
+        if (unidentified && accessMode == UnidentifiedAccessMode.UNKNOWN && profileKey == null) {
+          Log.i(TAG, "Marking recipient as UD-unrestricted following a UD send.");
+          DatabaseFactory.getRecipientDatabase(context).setUnidentifiedAccessMode(recipient, UnidentifiedAccessMode.UNRESTRICTED);
+        } else if (unidentified && accessMode == UnidentifiedAccessMode.UNKNOWN) {
+          Log.i(TAG, "Marking recipient as UD-enabled following a UD send.");
+          DatabaseFactory.getRecipientDatabase(context).setUnidentifiedAccessMode(recipient, UnidentifiedAccessMode.ENABLED);
+        } else if (!unidentified && accessMode != UnidentifiedAccessMode.DISABLED) {
+          Log.i(TAG, "Marking recipient as UD-disabled following a non-UD send.");
+          DatabaseFactory.getRecipientDatabase(context).setUnidentifiedAccessMode(recipient, UnidentifiedAccessMode.DISABLED);
+        }
+      }
+
+      if (message.getExpiresIn() > 0 && !message.isExpirationUpdate()) {
+        database.markExpireStarted(messageId);
+        expirationManager.scheduleDeletion(messageId, true, message.getExpiresIn());
+      }
+
+      Log.i(TAG, "Sent message: " + messageId);
+
     } catch (InsecureFallbackApprovalException ifae) {
       Log.w(TAG, ifae);
       database.markAsPendingInsecureSmsFallback(messageId);
       notifyMediaMessageDeliveryFailed(context, messageId);
-      ApplicationContext.getInstance(context).getJobManager().add(new DirectoryRefreshJob(context));
+      ApplicationContext.getInstance(context).getJobManager().add(new DirectoryRefreshJob(context, false));
     } catch (UntrustedIdentityException uie) {
       Log.w(TAG, uie);
-      Recipients recipients  = RecipientFactory.getRecipientsFromString(context, uie.getE164Number(), false);
-      long       recipientId = recipients.getPrimaryRecipient().getRecipientId();
-
-      database.addMismatchedIdentity(messageId, recipientId, uie.getIdentityKey());
+      database.addMismatchedIdentity(messageId, Address.fromSerialized(uie.getE164Number()), uie.getIdentityKey());
       database.markAsSentFailed(messageId);
-      database.markAsPush(messageId);
     }
   }
 
   @Override
-  public boolean onShouldRetryThrowable(Exception exception) {
-    if (exception instanceof RequirementNotMetException) return true;
-    if (exception instanceof RetryLaterException)        return true;
-
+  public boolean onShouldRetry(Exception exception) {
+    if (exception instanceof RetryLaterException) return true;
     return false;
   }
 
@@ -101,31 +147,35 @@ public class PushMediaSendJob extends PushSendJob implements InjectableType {
     notifyMediaMessageDeliveryFailed(context, messageId);
   }
 
-  private void deliver(MasterSecret masterSecret, OutgoingMediaMessage message)
+  private boolean deliver(OutgoingMediaMessage message)
       throws RetryLaterException, InsecureFallbackApprovalException, UntrustedIdentityException,
              UndeliverableMessageException
   {
-    if (message.getRecipients() == null                       ||
-        message.getRecipients().getPrimaryRecipient() == null ||
-        message.getRecipients().getPrimaryRecipient().getNumber() == null)
-    {
+    if (message.getRecipient() == null) {
       throw new UndeliverableMessageException("No destination address.");
     }
 
-    TextSecureMessageSender messageSender = messageSenderFactory.create();
-
     try {
-      TextSecureAddress          address           = getPushAddress(message.getRecipients().getPrimaryRecipient().getNumber());
-      List<Attachment>           scaledAttachments = scaleAttachments(masterSecret, MediaConstraints.PUSH_CONSTRAINTS, message.getAttachments());
-      List<TextSecureAttachment> attachmentStreams = getAttachmentsFor(masterSecret, scaledAttachments);
-      TextSecureDataMessage      mediaMessage      = TextSecureDataMessage.newBuilder()
-                                                                          .withBody(message.getBody())
-                                                                          .withAttachments(attachmentStreams)
-                                                                          .withTimestamp(message.getSentTimeMillis())
-                                                                          .build();
+      SignalServiceAddress                     address           = getPushAddress(message.getRecipient().getAddress());
+      MediaConstraints                         mediaConstraints  = MediaConstraints.getPushMediaConstraints();
+      List<Attachment>                         scaledAttachments = scaleAndStripExifFromAttachments(mediaConstraints, message.getAttachments());
+      List<SignalServiceAttachment>            attachmentStreams = getAttachmentsFor(scaledAttachments);
+      Optional<byte[]>                         profileKey        = getProfileKey(message.getRecipient());
+      Optional<SignalServiceDataMessage.Quote> quote             = getQuoteFor(message);
+      List<SharedContact>                      sharedContacts    = getSharedContactsFor(message);
+      SignalServiceDataMessage                 mediaMessage      = SignalServiceDataMessage.newBuilder()
+                                                                                           .withBody(message.getBody())
+                                                                                           .withAttachments(attachmentStreams)
+                                                                                           .withTimestamp(message.getSentTimeMillis())
+                                                                                           .withExpiration((int)(message.getExpiresIn() / 1000))
+                                                                                           .withProfileKey(profileKey.orNull())
+                                                                                           .withQuote(quote.orNull())
+                                                                                           .withSharedContacts(sharedContacts)
+                                                                                           .asExpirationUpdate(message.isExpirationUpdate())
+                                                                                           .build();
 
-      messageSender.sendMessage(address, mediaMessage);
-    } catch (InvalidNumberException | UnregisteredUserException e) {
+      return messageSender.sendMessage(address, UnidentifiedAccessUtil.getAccessFor(context, message.getRecipient()), mediaMessage).getSuccess().isUnidentified();
+    } catch (UnregisteredUserException e) {
       Log.w(TAG, e);
       throw new InsecureFallbackApprovalException(e);
     } catch (FileNotFoundException e) {
@@ -136,4 +186,5 @@ public class PushMediaSendJob extends PushSendJob implements InjectableType {
       throw new RetryLaterException(e);
     }
   }
+
 }

@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2012 Moxie Marlinspike
  *
  * This program is free software: you can redistribute it and/or modify
@@ -17,10 +17,12 @@
 package org.thoughtcrime.securesms.database.model;
 
 import android.content.Context;
+import android.support.annotation.NonNull;
 import android.text.SpannableString;
 
+import org.thoughtcrime.securesms.database.MmsSmsColumns;
 import org.thoughtcrime.securesms.database.SmsDatabase;
-import org.thoughtcrime.securesms.recipients.Recipients;
+import org.thoughtcrime.securesms.recipients.Recipient;
 
 /**
  * The base class for all message record models.  Encapsulates basic data
@@ -35,32 +37,56 @@ public abstract class DisplayRecord {
   protected final Context context;
   protected final long type;
 
-  private final Recipients recipients;
+  private final Recipient  recipient;
   private final long       dateSent;
   private final long       dateReceived;
   private final long       threadId;
-  private final Body       body;
+  private final String     body;
+  private final int        deliveryStatus;
+  private final int        deliveryReceiptCount;
+  private final int        readReceiptCount;
 
-  public DisplayRecord(Context context, Body body, Recipients recipients, long dateSent,
-                       long dateReceived, long threadId, long type)
+  DisplayRecord(Context context, String body, Recipient recipient, long dateSent,
+                long dateReceived, long threadId, int deliveryStatus, int deliveryReceiptCount,
+                long type, int readReceiptCount)
   {
     this.context              = context.getApplicationContext();
     this.threadId             = threadId;
-    this.recipients           = recipients;
+    this.recipient            = recipient;
     this.dateSent             = dateSent;
     this.dateReceived         = dateReceived;
     this.type                 = type;
     this.body                 = body;
+    this.deliveryReceiptCount = deliveryReceiptCount;
+    this.readReceiptCount     = readReceiptCount;
+    this.deliveryStatus       = deliveryStatus;
   }
 
-  public Body getBody() {
-    return body;
+  public @NonNull String getBody() {
+    return body == null ? "" : body;
+  }
+
+  public boolean isFailed() {
+    return
+        MmsSmsColumns.Types.isFailedMessageType(type)            ||
+        MmsSmsColumns.Types.isPendingSecureSmsFallbackType(type) ||
+        deliveryStatus >= SmsDatabase.Status.STATUS_FAILED;
+  }
+
+  public boolean isPending() {
+    return MmsSmsColumns.Types.isPendingMessageType(type) &&
+           !MmsSmsColumns.Types.isIdentityVerified(type)  &&
+           !MmsSmsColumns.Types.isIdentityDefault(type);
+  }
+
+  public boolean isOutgoing() {
+    return MmsSmsColumns.Types.isOutgoingMessageType(type);
   }
 
   public abstract SpannableString getDisplayBody();
 
-  public Recipients getRecipients() {
-    return recipients;
+  public Recipient getRecipient() {
+    return recipient;
   }
 
   public long getDateSent() {
@@ -95,6 +121,10 @@ public abstract class DisplayRecord {
     return isGroupUpdate() || isGroupQuit();
   }
 
+  public boolean isExpirationTimerUpdate() {
+    return SmsDatabase.Types.isExpirationTimerUpdate(type);
+  }
+
   public boolean isCallLog() {
     return SmsDatabase.Types.isCallLog(type);
   }
@@ -115,21 +145,32 @@ public abstract class DisplayRecord {
     return SmsDatabase.Types.isMissedCall(type);
   }
 
-  public static class Body {
-    private final String body;
-    private final boolean plaintext;
+  public boolean isVerificationStatusChange() {
+    return SmsDatabase.Types.isIdentityDefault(type) || SmsDatabase.Types.isIdentityVerified(type);
+  }
 
-    public Body(String body, boolean plaintext) {
-      this.body      = body;
-      this.plaintext = plaintext;
-    }
+  public int getDeliveryStatus() {
+    return deliveryStatus;
+  }
 
-    public boolean isPlaintext() {
-      return plaintext;
-    }
+  public int getDeliveryReceiptCount() {
+    return deliveryReceiptCount;
+  }
 
-    public String getBody() {
-      return body == null ? "" : body;
-    }
+  public int getReadReceiptCount() {
+    return readReceiptCount;
+  }
+
+  public boolean isDelivered() {
+    return (deliveryStatus >= SmsDatabase.Status.STATUS_COMPLETE &&
+            deliveryStatus < SmsDatabase.Status.STATUS_PENDING) || deliveryReceiptCount > 0;
+  }
+
+  public boolean isRemoteRead() {
+    return readReceiptCount > 0;
+  }
+
+  public boolean isPendingInsecureSmsFallback() {
+    return SmsDatabase.Types.isPendingInsecureSmsFallbackType(type);
   }
 }

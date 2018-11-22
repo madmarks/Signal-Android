@@ -1,4 +1,4 @@
-/**
+/*
  * Copyright (C) 2012 Moxie Marlinspike
  *
  * This program is free software: you can redistribute it and/or modify
@@ -24,9 +24,7 @@ import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.database.MmsSmsColumns;
 import org.thoughtcrime.securesms.database.SmsDatabase;
 import org.thoughtcrime.securesms.database.documents.IdentityKeyMismatch;
-import org.thoughtcrime.securesms.database.documents.NetworkFailure;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.recipients.Recipients;
 
 import java.util.LinkedList;
 import java.util.List;
@@ -41,17 +39,20 @@ import java.util.List;
 public class SmsMessageRecord extends MessageRecord {
 
   public SmsMessageRecord(Context context, long id,
-                          Body body, Recipients recipients,
+                          String body, Recipient recipient,
                           Recipient individualRecipient,
                           int recipientDeviceId,
                           long dateSent, long dateReceived,
-                          int receiptCount,
+                          int deliveryReceiptCount,
                           long type, long threadId,
-                          int status, List<IdentityKeyMismatch> mismatches)
+                          int status, List<IdentityKeyMismatch> mismatches,
+                          int subscriptionId, long expiresIn, long expireStarted,
+                          int readReceiptCount, boolean unidentified)
   {
-    super(context, id, body, recipients, individualRecipient, recipientDeviceId,
-          dateSent, dateReceived, threadId, getGenericDeliveryStatus(status), receiptCount, type,
-          mismatches, new LinkedList<NetworkFailure>());
+    super(context, id, body, recipient, individualRecipient, recipientDeviceId,
+          dateSent, dateReceived, threadId, status, deliveryReceiptCount, type,
+          mismatches, new LinkedList<>(), subscriptionId,
+          expiresIn, expireStarted, readReceiptCount, unidentified);
   }
 
   public long getType() {
@@ -62,10 +63,6 @@ public class SmsMessageRecord extends MessageRecord {
   public SpannableString getDisplayBody() {
     if (SmsDatabase.Types.isFailedDecryptType(type)) {
       return emphasisAdded(context.getString(R.string.MessageDisplayHelper_bad_encrypted_message));
-    } else if (isProcessedKeyExchange()) {
-      return new SpannableString("");
-    } else if (isStaleKeyExchange()) {
-      return emphasisAdded(context.getString(R.string.ConversationItem_error_received_stale_key_exchange_message));
     } else if (isCorruptedKeyExchange()) {
       return emphasisAdded(context.getString(R.string.SmsMessageRecord_received_corrupted_key_exchange_message));
     } else if (isInvalidVersionKeyExchange()) {
@@ -73,23 +70,19 @@ public class SmsMessageRecord extends MessageRecord {
     } else if (MmsSmsColumns.Types.isLegacyType(type)) {
       return emphasisAdded(context.getString(R.string.MessageRecord_message_encrypted_with_a_legacy_protocol_version_that_is_no_longer_supported));
     } else if (isBundleKeyExchange()) {
-      return emphasisAdded(context.getString(R.string.SmsMessageRecord_received_message_with_unknown_identity_key_click_to_process));
-    } else if (isIdentityUpdate()) {
-      return emphasisAdded(context.getString(R.string.SmsMessageRecord_received_updated_but_unknown_identity_information));
+      return emphasisAdded(context.getString(R.string.SmsMessageRecord_received_message_with_new_safety_number_tap_to_process));
     } else if (isKeyExchange() && isOutgoing()) {
       return new SpannableString("");
     } else if (isKeyExchange() && !isOutgoing()) {
-      return emphasisAdded(context.getString(R.string.ConversationItem_received_key_exchange_message_click_to_process));
+      return emphasisAdded(context.getString(R.string.ConversationItem_received_key_exchange_message_tap_to_process));
     } else if (SmsDatabase.Types.isDuplicateMessageType(type)) {
       return emphasisAdded(context.getString(R.string.SmsMessageRecord_duplicate_message));
-    } else if (SmsDatabase.Types.isDecryptInProgressType(type)) {
-      return emphasisAdded(context.getString(R.string.MessageDisplayHelper_decrypting_please_wait));
     } else if (SmsDatabase.Types.isNoRemoteSessionType(type)) {
       return emphasisAdded(context.getString(R.string.MessageDisplayHelper_message_encrypted_for_non_existing_session));
-    } else if (!getBody().isPlaintext()) {
-      return emphasisAdded(context.getString(R.string.MessageNotifier_locked_message));
-    } else if (SmsDatabase.Types.isEndSessionType(type)) {
+    } else if (isEndSession() && isOutgoing()) {
       return emphasisAdded(context.getString(R.string.SmsMessageRecord_secure_session_reset));
+    } else if (isEndSession()) {
+      return emphasisAdded(context.getString(R.string.SmsMessageRecord_secure_session_reset_s, getIndividualRecipient().toShortString()));
     } else {
       return super.getDisplayBody();
     }
@@ -103,17 +96,5 @@ public class SmsMessageRecord extends MessageRecord {
   @Override
   public boolean isMmsNotification() {
     return false;
-  }
-
-  private static int getGenericDeliveryStatus(int status) {
-    if (status == SmsDatabase.Status.STATUS_NONE) {
-      return MessageRecord.DELIVERY_STATUS_NONE;
-    } else if (status >= SmsDatabase.Status.STATUS_FAILED) {
-      return MessageRecord.DELIVERY_STATUS_FAILED;
-    } else if (status >= SmsDatabase.Status.STATUS_PENDING) {
-      return MessageRecord.DELIVERY_STATUS_PENDING;
-    } else {
-      return MessageRecord.DELIVERY_STATUS_RECEIVED;
-    }
   }
 }

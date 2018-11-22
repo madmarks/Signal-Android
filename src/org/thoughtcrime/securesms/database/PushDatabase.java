@@ -3,15 +3,16 @@ package org.thoughtcrime.securesms.database;
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
 import android.support.annotation.NonNull;
-import android.util.Log;
+import org.thoughtcrime.securesms.logging.Log;
 
+import net.sqlcipher.database.SQLiteDatabase;
+
+import org.thoughtcrime.securesms.database.helpers.SQLCipherOpenHelper;
 import org.thoughtcrime.securesms.util.Base64;
-import org.whispersystems.libaxolotl.util.guava.Optional;
-import org.whispersystems.textsecure.api.messages.TextSecureEnvelope;
-import org.whispersystems.textsecure.internal.util.Util;
+import org.whispersystems.libsignal.util.guava.Optional;
+import org.whispersystems.signalservice.api.messages.SignalServiceEnvelope;
+import org.whispersystems.signalservice.internal.util.Util;
 
 import java.io.IOException;
 
@@ -19,23 +20,26 @@ public class PushDatabase extends Database {
 
   private static final String TAG = PushDatabase.class.getSimpleName();
 
-  private static final String TABLE_NAME   = "push";
-  public  static final String ID           = "_id";
-  public  static final String TYPE         = "type";
-  public  static final String SOURCE       = "source";
-  public  static final String DEVICE_ID    = "device_id";
-  public  static final String LEGACY_MSG   = "body";
-  public  static final String CONTENT      = "content";
-  public  static final String TIMESTAMP    = "timestamp";
+  private static final String TABLE_NAME       = "push";
+  public  static final String ID               = "_id";
+  public  static final String TYPE             = "type";
+  public  static final String SOURCE           = "source";
+  public  static final String DEVICE_ID        = "device_id";
+  public  static final String LEGACY_MSG       = "body";
+  public  static final String CONTENT          = "content";
+  public  static final String TIMESTAMP        = "timestamp";
+  public  static final String SERVER_TIMESTAMP = "server_timestamp";
+  public  static final String SERVER_GUID      = "server_guid";
 
   public static final String CREATE_TABLE = "CREATE TABLE " + TABLE_NAME + " (" + ID + " INTEGER PRIMARY KEY, " +
-      TYPE + " INTEGER, " + SOURCE + " TEXT, " + DEVICE_ID + " INTEGER, " + LEGACY_MSG + " TEXT, " + CONTENT + " TEXT, " + TIMESTAMP + " INTEGER);";
+      TYPE + " INTEGER, " + SOURCE + " TEXT, " + DEVICE_ID + " INTEGER, " + LEGACY_MSG + " TEXT, " + CONTENT + " TEXT, " + TIMESTAMP + " INTEGER, " +
+      SERVER_TIMESTAMP + " INTEGER DEFAULT 0, " + SERVER_GUID + " TEXT DEFAULT NULL);";
 
-  public PushDatabase(Context context, SQLiteOpenHelper databaseHelper) {
+  public PushDatabase(Context context, SQLCipherOpenHelper databaseHelper) {
     super(context, databaseHelper);
   }
 
-  public long insert(@NonNull TextSecureEnvelope envelope) {
+  public long insert(@NonNull SignalServiceEnvelope envelope) {
     Optional<Long> messageId = find(envelope);
 
     if (messageId.isPresent()) {
@@ -48,12 +52,14 @@ public class PushDatabase extends Database {
       values.put(LEGACY_MSG, envelope.hasLegacyMessage() ? Base64.encodeBytes(envelope.getLegacyMessage()) : "");
       values.put(CONTENT, envelope.hasContent() ? Base64.encodeBytes(envelope.getContent()) : "");
       values.put(TIMESTAMP, envelope.getTimestamp());
+      values.put(SERVER_TIMESTAMP, envelope.getServerTimestamp());
+      values.put(SERVER_GUID, envelope.getUuid());
 
       return databaseHelper.getWritableDatabase().insert(TABLE_NAME, null, values);
     }
   }
 
-  public TextSecureEnvelope get(long id) throws NoSuchMessageException {
+  public SignalServiceEnvelope get(long id) throws NoSuchMessageException {
     Cursor cursor = null;
 
     try {
@@ -65,13 +71,14 @@ public class PushDatabase extends Database {
         String legacyMessage = cursor.getString(cursor.getColumnIndexOrThrow(LEGACY_MSG));
         String content       = cursor.getString(cursor.getColumnIndexOrThrow(CONTENT));
 
-        return new TextSecureEnvelope(cursor.getInt(cursor.getColumnIndexOrThrow(TYPE)),
-                                      cursor.getString(cursor.getColumnIndexOrThrow(SOURCE)),
-                                      cursor.getInt(cursor.getColumnIndexOrThrow(DEVICE_ID)),
-                                      "",
-                                      cursor.getLong(cursor.getColumnIndexOrThrow(TIMESTAMP)),
-                                      Util.isEmpty(legacyMessage) ? null : Base64.decode(legacyMessage),
-                                      Util.isEmpty(content) ? null : Base64.decode(content));
+        return new SignalServiceEnvelope(cursor.getInt(cursor.getColumnIndexOrThrow(TYPE)),
+                                         cursor.getString(cursor.getColumnIndexOrThrow(SOURCE)),
+                                         cursor.getInt(cursor.getColumnIndexOrThrow(DEVICE_ID)),
+                                         cursor.getLong(cursor.getColumnIndexOrThrow(TIMESTAMP)),
+                                         Util.isEmpty(legacyMessage) ? null : Base64.decode(legacyMessage),
+                                         Util.isEmpty(content) ? null : Base64.decode(content),
+                                         cursor.getLong(cursor.getColumnIndexOrThrow(SERVER_TIMESTAMP)),
+                                         cursor.getString(cursor.getColumnIndexOrThrow(SERVER_GUID)));
       }
     } catch (IOException e) {
       Log.w(TAG, e);
@@ -96,7 +103,7 @@ public class PushDatabase extends Database {
     return new Reader(cursor);
   }
 
-  private Optional<Long> find(TextSecureEnvelope envelope) {
+  private Optional<Long> find(SignalServiceEnvelope envelope) {
     SQLiteDatabase database = databaseHelper.getReadableDatabase();
     Cursor         cursor   = null;
 
@@ -129,21 +136,24 @@ public class PushDatabase extends Database {
       this.cursor = cursor;
     }
 
-    public TextSecureEnvelope getNext() {
+    public SignalServiceEnvelope getNext() {
       try {
         if (cursor == null || !cursor.moveToNext())
           return null;
 
-        int    type          = cursor.getInt(cursor.getColumnIndexOrThrow(TYPE));
-        String source        = cursor.getString(cursor.getColumnIndexOrThrow(SOURCE));
-        int    deviceId      = cursor.getInt(cursor.getColumnIndexOrThrow(DEVICE_ID));
-        String legacyMessage = cursor.getString(cursor.getColumnIndexOrThrow(LEGACY_MSG));
-        String content       = cursor.getString(cursor.getColumnIndexOrThrow(CONTENT));
-        long   timestamp     = cursor.getLong(cursor.getColumnIndexOrThrow(TIMESTAMP));
+        int    type            = cursor.getInt(cursor.getColumnIndexOrThrow(TYPE));
+        String source          = cursor.getString(cursor.getColumnIndexOrThrow(SOURCE));
+        int    deviceId        = cursor.getInt(cursor.getColumnIndexOrThrow(DEVICE_ID));
+        String legacyMessage   = cursor.getString(cursor.getColumnIndexOrThrow(LEGACY_MSG));
+        String content         = cursor.getString(cursor.getColumnIndexOrThrow(CONTENT));
+        long   timestamp       = cursor.getLong(cursor.getColumnIndexOrThrow(TIMESTAMP));
+        long   serverTimestamp = cursor.getLong(cursor.getColumnIndexOrThrow(SERVER_TIMESTAMP));
+        String serverGuid      = cursor.getString(cursor.getColumnIndexOrThrow(SERVER_GUID));
 
-        return new TextSecureEnvelope(type, source, deviceId, "", timestamp,
-                                      legacyMessage != null ? Base64.decode(legacyMessage) : null,
-                                      content != null ? Base64.decode(content) : null);
+        return new SignalServiceEnvelope(type, source, deviceId, timestamp,
+                                         legacyMessage != null ? Base64.decode(legacyMessage) : null,
+                                         content != null ? Base64.decode(content) : null,
+                                         serverTimestamp, serverGuid);
       } catch (IOException e) {
         throw new AssertionError(e);
       }

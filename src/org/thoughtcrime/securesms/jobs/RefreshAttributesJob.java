@@ -1,20 +1,25 @@
 package org.thoughtcrime.securesms.jobs;
 
 import android.content.Context;
-import android.util.Log;
+import android.support.annotation.NonNull;
 
-import org.thoughtcrime.redphone.signaling.RedPhoneAccountAttributes;
-import org.thoughtcrime.redphone.signaling.RedPhoneAccountManager;
+import org.thoughtcrime.securesms.ApplicationContext;
+import org.thoughtcrime.securesms.jobmanager.SafeData;
+import org.thoughtcrime.securesms.logging.Log;
+
 import org.thoughtcrime.securesms.dependencies.InjectableType;
+import org.thoughtcrime.securesms.jobmanager.JobParameters;
+
+import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.jobqueue.JobParameters;
-import org.whispersystems.jobqueue.requirements.NetworkRequirement;
-import org.whispersystems.textsecure.api.TextSecureAccountManager;
-import org.whispersystems.textsecure.api.push.exceptions.NetworkFailureException;
+import org.whispersystems.signalservice.api.SignalServiceAccountManager;
+import org.whispersystems.signalservice.api.push.exceptions.NetworkFailureException;
 
 import java.io.IOException;
 
 import javax.inject.Inject;
+
+import androidx.work.Data;
 
 public class RefreshAttributesJob extends ContextJob implements InjectableType {
 
@@ -22,30 +27,43 @@ public class RefreshAttributesJob extends ContextJob implements InjectableType {
 
   private static final String TAG = RefreshAttributesJob.class.getSimpleName();
 
-  @Inject transient TextSecureAccountManager textSecureAccountManager;
-  @Inject transient RedPhoneAccountManager   redPhoneAccountManager;
+  @Inject transient SignalServiceAccountManager signalAccountManager;
+
+  public RefreshAttributesJob() {
+    super(null, null);
+  }
 
   public RefreshAttributesJob(Context context) {
     super(context, JobParameters.newBuilder()
-                                .withPersistence()
-                                .withRequirement(new NetworkRequirement(context))
-                                .withWakeLock(true)
+                                .withNetworkRequirement()
+                                .withGroupId(RefreshAttributesJob.class.getName())
                                 .create());
   }
 
   @Override
-  public void onAdded() {}
+  protected void initialize(@NonNull SafeData data) {
+  }
+
+  @Override
+  protected @NonNull Data serialize(@NonNull Data.Builder dataBuilder) {
+    return dataBuilder.build();
+  }
 
   @Override
   public void onRun() throws IOException {
-    String signalingKey      = TextSecurePreferences.getSignalingKey(context);
-    String gcmRegistrationId = TextSecurePreferences.getGcmRegistrationId(context);
-    int    registrationId    = TextSecurePreferences.getLocalRegistrationId(context);
+    String  signalingKey                = TextSecurePreferences.getSignalingKey(context);
+    int     registrationId              = TextSecurePreferences.getLocalRegistrationId(context);
+    boolean fetchesMessages             = TextSecurePreferences.isGcmDisabled(context);
+    String  pin                         = TextSecurePreferences.getRegistrationLockPin(context);
+    byte[]  unidentifiedAccessKey       = UnidentifiedAccessUtil.getSelfUnidentifiedAccessKey(context);
+    boolean universalUnidentifiedAccess = TextSecurePreferences.isUniversalUnidentifiedAccess(context);
 
-    String token = textSecureAccountManager.getAccountVerificationToken();
+    signalAccountManager.setAccountAttributes(signalingKey, registrationId, fetchesMessages, pin,
+                                              unidentifiedAccessKey, universalUnidentifiedAccess);
 
-    redPhoneAccountManager.createAccount(token, new RedPhoneAccountAttributes(signalingKey, gcmRegistrationId));
-    textSecureAccountManager.setAccountAttributes(signalingKey, registrationId, true);
+    ApplicationContext.getInstance(context)
+                      .getJobManager()
+                      .add(new RefreshUnidentifiedDeliveryAbilityJob(context));
   }
 
   @Override

@@ -18,13 +18,13 @@
 package org.thoughtcrime.securesms.crypto;
 
 import android.support.annotation.NonNull;
-import android.util.Log;
+import org.thoughtcrime.securesms.logging.Log;
 
 import org.thoughtcrime.securesms.util.Base64;
 import org.thoughtcrime.securesms.util.Hex;
-import org.whispersystems.libaxolotl.InvalidMessageException;
-import org.whispersystems.libaxolotl.ecc.Curve;
-import org.whispersystems.libaxolotl.ecc.ECPrivateKey;
+import org.whispersystems.libsignal.InvalidMessageException;
+import org.whispersystems.libsignal.ecc.Curve;
+import org.whispersystems.libsignal.ecc.ECPrivateKey;
 
 import java.io.IOException;
 import java.security.GeneralSecurityException;
@@ -55,6 +55,8 @@ import javax.crypto.spec.SecretKeySpec;
 
 public class MasterCipher {
 
+  private static final String TAG = MasterCipher.class.getSimpleName();
+
   private final MasterSecret masterSecret;
   private final Cipher encryptingCipher;
   private final Cipher decryptingCipher;
@@ -75,7 +77,7 @@ public class MasterCipher {
     return encryptBytes(privateKey.serialize());
   }
 
-  public String encryptBody(String body)  {
+  public String encryptBody(@NonNull  String body)  {
     return encryptAndEncodeBytes(body.getBytes());
   }
 	
@@ -84,12 +86,12 @@ public class MasterCipher {
   }
 	
   public ECPrivateKey decryptKey(byte[] key)
-      throws org.whispersystems.libaxolotl.InvalidKeyException
+      throws org.whispersystems.libsignal.InvalidKeyException
   {
     try {
       return Curve.decodePrivatePoint(decryptBytes(key));
     } catch (InvalidMessageException ime) {
-      throw new org.whispersystems.libaxolotl.InvalidKeyException(ime);
+      throw new org.whispersystems.libsignal.InvalidKeyException(ime);
     }
   }
 	
@@ -125,13 +127,13 @@ public class MasterCipher {
 	
   public boolean verifyMacFor(String content, byte[] theirMac) {
     byte[] ourMac = getMacFor(content);
-    Log.w("MasterCipher", "Our Mac: " + Hex.toString(ourMac));
-    Log.w("MasterCipher", "Thr Mac: " + Hex.toString(theirMac));
+    Log.i(TAG, "Our Mac: " + Hex.toString(ourMac));
+    Log.i(TAG, "Thr Mac: " + Hex.toString(theirMac));
     return Arrays.equals(ourMac, theirMac);
   }
 	
   public byte[] getMacFor(String content) {
-    Log.w("MasterCipher", "Macing: " + content);
+    Log.w(TAG, "Macing: " + content);
     try {
       Mac mac = getMac(masterSecret.getMacKey());
       return mac.doFinal(content.getBytes());
@@ -149,7 +151,7 @@ public class MasterCipher {
     }
   }
 	
-  private String encryptAndEncodeBytes(byte[] bytes) {
+  private String encryptAndEncodeBytes(@NonNull  byte[] bytes) {
     byte[] encryptedAndMacBody = encryptBytes(bytes);
     return Base64.encodeBytes(encryptedAndMacBody);
   }

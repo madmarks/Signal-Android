@@ -1,6 +1,5 @@
 package org.thoughtcrime.securesms.attachments;
 
-import android.graphics.Bitmap;
 import android.net.Uri;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
@@ -15,6 +14,9 @@ public abstract class Attachment {
   private final long    size;
 
   @Nullable
+  private final String fileName;
+
+  @Nullable
   private final String  location;
 
   @Nullable
@@ -23,19 +25,40 @@ public abstract class Attachment {
   @Nullable
   private final String relay;
 
-  // XXX - This shouldn't be here.
   @Nullable
-  private Bitmap thumbnail;
+  private final byte[] digest;
 
-  public Attachment(@NonNull String contentType, int transferState, long size,
-                    @Nullable String location, @Nullable String key, @Nullable String relay)
+  @Nullable
+  private final String fastPreflightId;
+
+  private final boolean voiceNote;
+  private final int width;
+  private final int height;
+
+  private final boolean quote;
+
+  @Nullable
+  private final String caption;
+
+  public Attachment(@NonNull String contentType, int transferState, long size, @Nullable String fileName,
+                    @Nullable String location, @Nullable String key, @Nullable String relay,
+                    @Nullable byte[] digest, @Nullable String fastPreflightId, boolean voiceNote,
+                    int width, int height, boolean quote, @Nullable String caption)
   {
-    this.contentType   = contentType;
-    this.transferState = transferState;
-    this.size          = size;
-    this.location      = location;
-    this.key           = key;
-    this.relay         = relay;
+    this.contentType     = contentType;
+    this.transferState   = transferState;
+    this.size            = size;
+    this.fileName        = fileName;
+    this.location        = location;
+    this.key             = key;
+    this.relay           = relay;
+    this.digest          = digest;
+    this.fastPreflightId = fastPreflightId;
+    this.voiceNote       = voiceNote;
+    this.width           = width;
+    this.height          = height;
+    this.quote           = quote;
+    this.caption         = caption;
   }
 
   @Nullable
@@ -55,6 +78,11 @@ public abstract class Attachment {
 
   public long getSize() {
     return size;
+  }
+
+  @Nullable
+  public String getFileName() {
+    return fileName;
   }
 
   @NonNull
@@ -77,12 +105,33 @@ public abstract class Attachment {
     return relay;
   }
 
-  public void setThumbnail(@Nullable Bitmap thumbnail) {
-    this.thumbnail = thumbnail;
+  @Nullable
+  public byte[] getDigest() {
+    return digest;
   }
 
   @Nullable
-  public Bitmap getThumbnail() {
-    return thumbnail;
+  public String getFastPreflightId() {
+    return fastPreflightId;
+  }
+
+  public boolean isVoiceNote() {
+    return voiceNote;
+  }
+
+  public int getWidth() {
+    return width;
+  }
+
+  public int getHeight() {
+    return height;
+  }
+
+  public boolean isQuote() {
+    return quote;
+  }
+
+  public @Nullable String getCaption() {
+    return caption;
   }
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright (C) 2011 Whisper Systems
+/*
+ * Copyright (C) 2014-2017 Open Whisper Systems
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,64 +16,81 @@
  */
 package org.thoughtcrime.securesms;
 
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.res.ColorStateList;
+import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.RippleDrawable;
 import android.os.Build.VERSION;
 import android.os.Build.VERSION_CODES;
-import android.os.Handler;
-import android.support.annotation.DrawableRes;
 import android.support.annotation.NonNull;
+import android.support.annotation.Nullable;
+import android.text.Spannable;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.TextUtils;
+import android.text.style.StyleSpan;
 import android.util.AttributeSet;
 import android.view.View;
+import android.widget.ImageView;
 import android.widget.RelativeLayout;
 import android.widget.TextView;
 
+import com.amulyakhare.textdrawable.TextDrawable;
+import com.annimon.stream.Stream;
+
+import org.thoughtcrime.securesms.components.AlertView;
 import org.thoughtcrime.securesms.components.AvatarImageView;
+import org.thoughtcrime.securesms.components.DeliveryStatusView;
 import org.thoughtcrime.securesms.components.FromTextView;
 import org.thoughtcrime.securesms.components.ThumbnailView;
-import org.thoughtcrime.securesms.crypto.MasterSecret;
+import org.thoughtcrime.securesms.components.TypingIndicatorView;
 import org.thoughtcrime.securesms.database.model.ThreadRecord;
-import org.thoughtcrime.securesms.recipients.Recipients;
+import org.thoughtcrime.securesms.mms.GlideRequests;
+import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.recipients.RecipientModifiedListener;
+import org.thoughtcrime.securesms.search.model.MessageResult;
 import org.thoughtcrime.securesms.util.DateUtils;
-import org.thoughtcrime.securesms.util.ResUtil;
+import org.thoughtcrime.securesms.util.ThemeUtil;
+import org.thoughtcrime.securesms.util.Util;
+import org.thoughtcrime.securesms.util.ViewUtil;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
 import static org.thoughtcrime.securesms.util.SpanUtil.color;
 
-/**
- * A view that displays the element in a list of multiple conversation threads.
- * Used by SecureSMS's ListActivity via a ConversationListAdapter.
- *
- * @author Moxie Marlinspike
- */
-
 public class ConversationListItem extends RelativeLayout
-                                  implements Recipients.RecipientsModifiedListener, Unbindable
+                                  implements RecipientModifiedListener,
+                                             BindableConversationListItem, Unbindable
 {
+  @SuppressWarnings("unused")
   private final static String TAG = ConversationListItem.class.getSimpleName();
 
-  private final static Typeface BOLD_TYPEFACE  = Typeface.create("sans-serif", Typeface.BOLD);
-  private final static Typeface LIGHT_TYPEFACE = Typeface.create("sans-serif-light", Typeface.NORMAL);
+  private final static Typeface  BOLD_TYPEFACE  = Typeface.create("sans-serif-medium", Typeface.NORMAL);
+  private final static Typeface  LIGHT_TYPEFACE = Typeface.create("sans-serif", Typeface.NORMAL);
 
-  private Set<Long>       selectedThreads;
-  private Recipients      recipients;
-  private long            threadId;
-  private TextView        subjectView;
-  private FromTextView    fromView;
-  private TextView        dateView;
-  private boolean         read;
+  private Set<Long>           selectedThreads;
+  private Recipient           recipient;
+  private long                threadId;
+  private GlideRequests       glideRequests;
+  private View                subjectContainer;
+  private TextView            subjectView;
+  private TypingIndicatorView typingView;
+  private FromTextView        fromView;
+  private TextView            dateView;
+  private TextView            archivedView;
+  private DeliveryStatusView  deliveryStatusIndicator;
+  private AlertView           alertView;
+  private TextView            unreadIndicator;
+  private long                lastSeen;
+
+  private int             unreadCount;
   private AvatarImageView contactPhotoImage;
   private ThumbnailView   thumbnailView;
 
-  private final @DrawableRes int readBackground;
-  private final @DrawableRes int unreadBackround;
-
-  private final Handler handler = new Handler();
   private int distributionType;
 
   public ConversationListItem(Context context) {
@@ -82,109 +99,321 @@ public class ConversationListItem extends RelativeLayout
 
   public ConversationListItem(Context context, AttributeSet attrs) {
     super(context, attrs);
-    readBackground  = ResUtil.getDrawableRes(context, R.attr.conversation_list_item_background_read);
-    unreadBackround = ResUtil.getDrawableRes(context, R.attr.conversation_list_item_background_unread);
   }
 
   @Override
   protected void onFinishInflate() {
     super.onFinishInflate();
-    this.subjectView       = (TextView)        findViewById(R.id.subject);
-    this.fromView          = (FromTextView)    findViewById(R.id.from);
-    this.dateView          = (TextView)        findViewById(R.id.date);
-    this.contactPhotoImage = (AvatarImageView) findViewById(R.id.contact_photo_image);
-    this.thumbnailView     = (ThumbnailView)   findViewById(R.id.thumbnail);
+    this.subjectContainer        = findViewById(R.id.subject_container);
+    this.subjectView             = findViewById(R.id.subject);
+    this.typingView              = findViewById(R.id.typing_indicator);
+    this.fromView                = findViewById(R.id.from);
+    this.dateView                = findViewById(R.id.date);
+    this.deliveryStatusIndicator = findViewById(R.id.delivery_status);
+    this.alertView               = findViewById(R.id.indicators_parent);
+    this.contactPhotoImage       = findViewById(R.id.contact_photo_image);
+    this.thumbnailView           = findViewById(R.id.thumbnail);
+    this.archivedView            = findViewById(R.id.archived);
+    this.unreadIndicator         = findViewById(R.id.unread_indicator);
     thumbnailView.setClickable(false);
+
+    ViewUtil.setTextViewGravityStart(this.fromView, getContext());
+    ViewUtil.setTextViewGravityStart(this.subjectView, getContext());
   }
 
-  public void set(@NonNull MasterSecret masterSecret, @NonNull ThreadRecord thread,
-                  @NonNull Locale locale, @NonNull Set<Long> selectedThreads, boolean batchMode)
+  @Override
+  public void bind(@NonNull ThreadRecord thread,
+                   @NonNull GlideRequests glideRequests,
+                   @NonNull Locale locale,
+                   @NonNull Set<Long> typingThreads,
+                   @NonNull Set<Long> selectedThreads,
+                   boolean batchMode)
+  {
+    bind(thread, glideRequests, locale, typingThreads, selectedThreads, batchMode, null);
+  }
+
+  public void bind(@NonNull ThreadRecord thread,
+                   @NonNull GlideRequests glideRequests,
+                   @NonNull Locale locale,
+                   @NonNull Set<Long> typingThreads,
+                   @NonNull Set<Long> selectedThreads,
+                   boolean batchMode,
+                   @Nullable String highlightSubstring)
   {
     this.selectedThreads  = selectedThreads;
-    this.recipients       = thread.getRecipients();
+    this.recipient        = thread.getRecipient();
     this.threadId         = thread.getThreadId();
-    this.read             = thread.isRead();
+    this.glideRequests    = glideRequests;
+    this.unreadCount      = thread.getUnreadCount();
     this.distributionType = thread.getDistributionType();
+    this.lastSeen         = thread.getLastSeen();
 
-    this.recipients.addListener(this);
-    this.fromView.setText(recipients, read);
+    this.recipient.addListener(this);
+    if (highlightSubstring != null) {
+      this.fromView.setText(getHighlightedSpan(locale, recipient.getName(), highlightSubstring));
+    } else {
+      this.fromView.setText(recipient, unreadCount == 0);
+    }
 
-    this.subjectView.setText(thread.getDisplayBody());
-    this.subjectView.setTypeface(read ? LIGHT_TYPEFACE : BOLD_TYPEFACE);
+    if (typingThreads.contains(threadId)) {
+      this.subjectView.setVisibility(INVISIBLE);
+
+      this.typingView.setVisibility(VISIBLE);
+      this.typingView.startAnimation();
+    } else {
+      this.typingView.setVisibility(GONE);
+      this.typingView.stopAnimation();
+
+      this.subjectView.setVisibility(VISIBLE);
+      this.subjectView.setText(thread.getDisplayBody());
+      this.subjectView.setTypeface(unreadCount == 0 ? LIGHT_TYPEFACE : BOLD_TYPEFACE);
+      this.subjectView.setTextColor(unreadCount == 0 ? ThemeUtil.getThemedColor(getContext(), R.attr.conversation_list_item_subject_color)
+                                                     : ThemeUtil.getThemedColor(getContext(), R.attr.conversation_list_item_unread_color));
+    }
 
     if (thread.getDate() > 0) {
       CharSequence date = DateUtils.getBriefRelativeTimeSpanString(getContext(), locale, thread.getDate());
-      dateView.setText(read ? date : color(getResources().getColor(R.color.textsecure_primary), date));
-      dateView.setTypeface(read ? LIGHT_TYPEFACE : BOLD_TYPEFACE);
+      dateView.setText(date);
+      dateView.setTypeface(unreadCount == 0 ? LIGHT_TYPEFACE : BOLD_TYPEFACE);
+      dateView.setTextColor(unreadCount == 0 ? ThemeUtil.getThemedColor(getContext(), R.attr.conversation_list_item_date_color)
+                                             : ThemeUtil.getThemedColor(getContext(), R.attr.conversation_list_item_unread_color));
     }
 
-    setThumbnailSnippet(masterSecret, thread);
+    if (thread.isArchived()) {
+      this.archivedView.setVisibility(View.VISIBLE);
+    } else {
+      this.archivedView.setVisibility(View.GONE);
+    }
+
+    setStatusIcons(thread);
+    setThumbnailSnippet(thread);
     setBatchState(batchMode);
-    setBackground(thread);
-    setRippleColor(recipients);
-    this.contactPhotoImage.setAvatar(recipients, true);
+    setRippleColor(recipient);
+    setUnreadIndicator(thread);
+    this.contactPhotoImage.setAvatar(glideRequests, recipient, true);
+  }
+
+  public void bind(@NonNull  Recipient     contact,
+                   @NonNull  GlideRequests glideRequests,
+                   @NonNull  Locale        locale,
+                   @Nullable String        highlightSubstring)
+  {
+    this.selectedThreads = Collections.emptySet();
+    this.recipient       = contact;
+    this.glideRequests   = glideRequests;
+
+    this.recipient.addListener(this);
+
+    fromView.setText(getHighlightedSpan(locale, recipient.getName(), highlightSubstring));
+    subjectView.setText(getHighlightedSpan(locale, contact.getAddress().toPhoneString(), highlightSubstring));
+    dateView.setText("");
+    archivedView.setVisibility(GONE);
+    unreadIndicator.setVisibility(GONE);
+    deliveryStatusIndicator.setNone();
+    alertView.setNone();
+    thumbnailView.setVisibility(GONE);
+
+    setBatchState(false);
+    setRippleColor(contact);
+    contactPhotoImage.setAvatar(glideRequests, recipient, true);
+  }
+
+  public void bind(@NonNull  MessageResult messageResult,
+                   @NonNull  GlideRequests glideRequests,
+                   @NonNull  Locale        locale,
+                   @Nullable String        highlightSubstring)
+  {
+    this.selectedThreads = Collections.emptySet();
+    this.recipient       = messageResult.recipient;
+    this.glideRequests   = glideRequests;
+
+    this.recipient.addListener(this);
+
+    fromView.setText(recipient, true);
+    subjectView.setText(getHighlightedSpan(locale, messageResult.bodySnippet, highlightSubstring));
+    dateView.setText(DateUtils.getBriefRelativeTimeSpanString(getContext(), locale, messageResult.receivedTimestampMs));
+    archivedView.setVisibility(GONE);
+    unreadIndicator.setVisibility(GONE);
+    deliveryStatusIndicator.setNone();
+    alertView.setNone();
+    thumbnailView.setVisibility(GONE);
+
+    setBatchState(false);
+    setRippleColor(recipient);
+    contactPhotoImage.setAvatar(glideRequests, recipient, true);
   }
 
   @Override
   public void unbind() {
-    if (this.recipients != null) this.recipients.removeListener(this);
+    if (this.recipient != null) this.recipient.removeListener(this);
   }
 
   private void setBatchState(boolean batch) {
     setSelected(batch && selectedThreads.contains(threadId));
   }
 
-  public Recipients getRecipients() {
-    return recipients;
+  public Recipient getRecipient() {
+    return recipient;
   }
 
   public long getThreadId() {
     return threadId;
   }
 
+  public int getUnreadCount() {
+    return unreadCount;
+  }
+
   public int getDistributionType() {
     return distributionType;
   }
 
-  private void setThumbnailSnippet(MasterSecret masterSecret, ThreadRecord thread) {
+  public long getLastSeen() {
+    return lastSeen;
+  }
+
+  private void setThumbnailSnippet(ThreadRecord thread) {
     if (thread.getSnippetUri() != null) {
       this.thumbnailView.setVisibility(View.VISIBLE);
-      this.thumbnailView.setImageResource(masterSecret, thread.getSnippetUri());
+      this.thumbnailView.setImageResource(glideRequests, thread.getSnippetUri());
 
-      LayoutParams subjectParams = (RelativeLayout.LayoutParams)this.subjectView.getLayoutParams();
+      LayoutParams subjectParams = (RelativeLayout.LayoutParams)this.subjectContainer .getLayoutParams();
       subjectParams.addRule(RelativeLayout.LEFT_OF, R.id.thumbnail);
-      this.subjectView.setLayoutParams(subjectParams);
+      if (VERSION.SDK_INT >= VERSION_CODES.JELLY_BEAN_MR1) {
+        subjectParams.addRule(RelativeLayout.START_OF, R.id.thumbnail);
+      }
+      this.subjectContainer.setLayoutParams(subjectParams);
+      this.post(new ThumbnailPositioner(thumbnailView, archivedView, deliveryStatusIndicator, dateView));
     } else {
       this.thumbnailView.setVisibility(View.GONE);
 
-      LayoutParams subjectParams = (RelativeLayout.LayoutParams)this.subjectView.getLayoutParams();
-      subjectParams.addRule(RelativeLayout.LEFT_OF, 0);
-      this.subjectView.setLayoutParams(subjectParams);
+      LayoutParams subjectParams = (RelativeLayout.LayoutParams)this.subjectContainer.getLayoutParams();
+      subjectParams.addRule(RelativeLayout.LEFT_OF, R.id.status);
+      if (VERSION.SDK_INT >= VERSION_CODES.JELLY_BEAN_MR1) {
+        subjectParams.addRule(RelativeLayout.START_OF, R.id.status);
+      }
+      this.subjectContainer.setLayoutParams(subjectParams);
     }
   }
 
-  private void setBackground(ThreadRecord thread) {
-    if (thread.isRead()) setBackgroundResource(readBackground);
-    else                 setBackgroundResource(unreadBackround);
+  private void setStatusIcons(ThreadRecord thread) {
+    if (!thread.isOutgoing() || thread.isOutgoingCall() || thread.isVerificationStatusChange()) {
+      deliveryStatusIndicator.setNone();
+      alertView.setNone();
+    } else if (thread.isFailed()) {
+      deliveryStatusIndicator.setNone();
+      alertView.setFailed();
+    } else if (thread.isPendingInsecureSmsFallback()) {
+      deliveryStatusIndicator.setNone();
+      alertView.setPendingApproval();
+    } else {
+      alertView.setNone();
+
+      if      (thread.isPending())    deliveryStatusIndicator.setPending();
+      else if (thread.isRemoteRead()) deliveryStatusIndicator.setRead();
+      else if (thread.isDelivered())  deliveryStatusIndicator.setDelivered();
+      else                            deliveryStatusIndicator.setSent();
+    }
   }
 
-  @TargetApi(VERSION_CODES.LOLLIPOP)
-  private void setRippleColor(Recipients recipients) {
+  private void setRippleColor(Recipient recipient) {
     if (VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP) {
       ((RippleDrawable)(getBackground()).mutate())
-          .setColor(ColorStateList.valueOf(recipients.getColor().toConversationColor(getContext())));
+          .setColor(ColorStateList.valueOf(recipient.getColor().toConversationColor(getContext())));
     }
+  }
+
+  private void setUnreadIndicator(ThreadRecord thread) {
+    if (thread.isOutgoing() || thread.getUnreadCount() == 0) {
+      unreadIndicator.setVisibility(View.GONE);
+      return;
+    }
+
+    unreadIndicator.setText(String.valueOf(unreadCount));
+    unreadIndicator.setVisibility(View.VISIBLE);
+  }
+
+  private Spanned getHighlightedSpan(@NonNull  Locale locale,
+                                     @Nullable String value,
+                                     @Nullable String highlight)
+  {
+    if (TextUtils.isEmpty(value)) {
+      return new SpannableString("");
+    }
+
+    value = value.replaceAll("\n", " ");
+
+    if (TextUtils.isEmpty(highlight)) {
+      return new SpannableString(value);
+    }
+
+    String       normalizedValue  = value.toLowerCase(locale);
+    String       normalizedTest   = highlight.toLowerCase(locale);
+    List<String> testTokens       = Stream.of(normalizedTest.split(" ")).filter(s -> s.trim().length() > 0).toList();
+
+    Spannable spanned          = new SpannableString(value);
+    int       searchStartIndex = 0;
+
+    for (String token : testTokens) {
+      if (searchStartIndex >= spanned.length()) {
+        break;
+      }
+
+      int start = normalizedValue.indexOf(token, searchStartIndex);
+
+      if (start >= 0) {
+        int end = Math.min(start + token.length(), spanned.length());
+        spanned.setSpan(new StyleSpan(Typeface.BOLD), start, end, Spannable.SPAN_INCLUSIVE_EXCLUSIVE);
+        searchStartIndex = end;
+      }
+    }
+
+    return spanned;
   }
 
   @Override
-  public void onModified(final Recipients recipients) {
-    handler.post(new Runnable() {
-      @Override
-      public void run() {
-        fromView.setText(recipients, read);
-        contactPhotoImage.setAvatar(recipients, true);
-        setRippleColor(recipients);
-      }
+  public void onModified(final Recipient recipient) {
+    Util.runOnMain(() -> {
+      fromView.setText(recipient, unreadCount == 0);
+      contactPhotoImage.setAvatar(glideRequests, recipient, true);
+      setRippleColor(recipient);
     });
   }
+
+  private static class ThumbnailPositioner implements Runnable {
+
+    private final View thumbnailView;
+    private final View archivedView;
+    private final View deliveryStatusView;
+    private final View dateView;
+
+    ThumbnailPositioner(View thumbnailView, View archivedView, View deliveryStatusView, View dateView) {
+      this.thumbnailView      = thumbnailView;
+      this.archivedView       = archivedView;
+      this.deliveryStatusView = deliveryStatusView;
+      this.dateView           = dateView;
+    }
+
+    @Override
+    public void run() {
+      LayoutParams thumbnailParams = (RelativeLayout.LayoutParams)thumbnailView.getLayoutParams();
+
+      if (archivedView.getVisibility() == View.VISIBLE &&
+          (archivedView.getWidth() + deliveryStatusView.getWidth()) > dateView.getWidth())
+      {
+        thumbnailParams.addRule(RelativeLayout.LEFT_OF, R.id.status);
+        if (VERSION.SDK_INT >= VERSION_CODES.JELLY_BEAN_MR1) {
+          thumbnailParams.addRule(RelativeLayout.START_OF, R.id.status);
+        }
+      } else {
+        thumbnailParams.addRule(RelativeLayout.LEFT_OF, R.id.date);
+        if (VERSION.SDK_INT >= VERSION_CODES.JELLY_BEAN_MR1) {
+          thumbnailParams.addRule(RelativeLayout.START_OF, R.id.date);
+        }
+      }
+
+      thumbnailView.setLayoutParams(thumbnailParams);
+    }
+  }
+
 }

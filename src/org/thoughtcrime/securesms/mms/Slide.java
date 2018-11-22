@@ -28,9 +28,10 @@ import org.thoughtcrime.securesms.attachments.UriAttachment;
 import org.thoughtcrime.securesms.database.AttachmentDatabase;
 import org.thoughtcrime.securesms.util.MediaUtil;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libaxolotl.util.guava.Optional;
+import org.whispersystems.libsignal.util.guava.Optional;
 
-import java.io.IOException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 
 public abstract class Slide {
 
@@ -40,7 +41,6 @@ public abstract class Slide {
   public Slide(@NonNull Context context, @NonNull Attachment attachment) {
     this.context    = context;
     this.attachment = attachment;
-
   }
 
   public String getContentType() {
@@ -57,6 +57,30 @@ public abstract class Slide {
     return attachment.getThumbnailUri();
   }
 
+  @NonNull
+  public Optional<String> getBody() {
+    return Optional.absent();
+  }
+
+  @NonNull
+  public Optional<String> getCaption() {
+    return Optional.fromNullable(attachment.getCaption());
+  }
+
+  @NonNull
+  public Optional<String> getFileName() {
+    return Optional.fromNullable(attachment.getFileName());
+  }
+
+  @Nullable
+  public String getFastPreflightId() {
+    return attachment.getFastPreflightId();
+  }
+
+  public long getFileSize() {
+    return attachment.getSize();
+  }
+
   public boolean hasImage() {
     return false;
   }
@@ -66,6 +90,14 @@ public abstract class Slide {
   }
 
   public boolean hasAudio() {
+    return false;
+  }
+
+  public boolean hasDocument() {
+    return false;
+  }
+
+  public boolean hasLocation() {
     return false;
   }
 
@@ -81,10 +113,10 @@ public abstract class Slide {
 
   public boolean isPendingDownload() {
     return getTransferState() == AttachmentDatabase.TRANSFER_PROGRESS_FAILED ||
-           getTransferState() == AttachmentDatabase.TRANSFER_PROGRESS_AUTO_PENDING;
+           getTransferState() == AttachmentDatabase.TRANSFER_PROGRESS_PENDING;
   }
 
-  public long getTransferState() {
+  public int getTransferState() {
     return attachment.getTransferState();
   }
 
@@ -96,18 +128,44 @@ public abstract class Slide {
     return false;
   }
 
-  protected static Attachment constructAttachmentFromUri(@NonNull Context context,
-                                                         @NonNull Uri     uri,
-                                                         @NonNull String  defaultMime,
-                                                                  long     size)
-    throws IOException
+  public boolean hasPlayOverlay() {
+    return false;
+  }
+
+  protected static Attachment constructAttachmentFromUri(@NonNull  Context context,
+                                                         @NonNull  Uri     uri,
+                                                         @NonNull  String  defaultMime,
+                                                                   long     size,
+                                                                   int      width,
+                                                                   int      height,
+                                                                   boolean  hasThumbnail,
+                                                         @Nullable String   fileName,
+                                                                   boolean  voiceNote,
+                                                                   boolean quote)
   {
-    Optional<String> resolvedType = Optional.fromNullable(MediaUtil.getMimeType(context, uri));
-    return new UriAttachment(uri, resolvedType.or(defaultMime), AttachmentDatabase.TRANSFER_PROGRESS_STARTED, size);
+    try {
+      String                 resolvedType    = Optional.fromNullable(MediaUtil.getMimeType(context, uri)).or(defaultMime);
+      String                 fastPreflightId = String.valueOf(SecureRandom.getInstance("SHA1PRNG").nextLong());
+      return new UriAttachment(uri,
+                               hasThumbnail ? uri : null,
+                               resolvedType,
+                               AttachmentDatabase.TRANSFER_PROGRESS_STARTED,
+                               size,
+                               width,
+                               height,
+                               fileName,
+                               fastPreflightId,
+                               voiceNote,
+                               quote,
+                               null);
+    } catch (NoSuchAlgorithmException e) {
+      throw new AssertionError(e);
+    }
   }
 
   @Override
   public boolean equals(Object other) {
+    if (other == null)             return false;
     if (!(other instanceof Slide)) return false;
 
     Slide that = (Slide)other;
